@@ -31,7 +31,7 @@
  */
 
 void
-nir_metadata_require(nir_function_impl *impl, nir_metadata required)
+nir_metadata_require(nir_function_impl *impl, nir_metadata required, ...)
 {
 #define NEEDS_UPDATE(X) ((required & ~impl->valid_metadata) & (X))
 
@@ -41,6 +41,12 @@ nir_metadata_require(nir_function_impl *impl, nir_metadata required)
       nir_calc_dominance_impl(impl);
    if (NEEDS_UPDATE(nir_metadata_live_ssa_defs))
       nir_live_ssa_defs_impl(impl);
+   if (NEEDS_UPDATE(nir_metadata_loop_analysis)) {
+      va_list ap;
+      va_start(ap, required);
+      nir_loop_analyze_impl(impl, va_arg(ap, nir_variable_mode));
+      va_end(ap);
+   }
 
 #undef NEEDS_UPDATE
 
@@ -53,7 +59,7 @@ nir_metadata_preserve(nir_function_impl *impl, nir_metadata preserved)
    impl->valid_metadata &= preserved;
 }
 
-#ifdef DEBUG
+#ifndef NDEBUG
 /**
  * Make sure passes properly invalidate metadata (part 1).
  *
@@ -63,7 +69,7 @@ nir_metadata_preserve(nir_function_impl *impl, nir_metadata preserved)
 void
 nir_metadata_set_validation_flag(nir_shader *shader)
 {
-   nir_foreach_function(shader, function) {
+   nir_foreach_function(function, shader) {
       if (function->impl) {
          function->impl->valid_metadata |= nir_metadata_not_properly_reset;
       }
@@ -80,7 +86,7 @@ nir_metadata_set_validation_flag(nir_shader *shader)
 void
 nir_metadata_check_validation_flag(nir_shader *shader)
 {
-   nir_foreach_function(shader, function) {
+   nir_foreach_function(function, shader) {
       if (function->impl) {
          assert(!(function->impl->valid_metadata &
                   nir_metadata_not_properly_reset));

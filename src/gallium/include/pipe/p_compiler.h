@@ -48,6 +48,8 @@
 
 #if defined(_MSC_VER)
 
+#include <intrin.h>
+
 /* Avoid 'expression is always true' warning */
 #pragma warning(disable: 4296)
 
@@ -58,9 +60,6 @@
  * Alternative stdint.h and stdbool.h headers are supplied in include/c99 for
  * systems that lack it.
  */
-#ifndef __STDC_LIMIT_MACROS
-#define __STDC_LIMIT_MACROS 1
-#endif
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -92,17 +91,6 @@ typedef unsigned char boolean;
 #else
 #define va_copy(dest, src) (dest) = (src)
 #endif
-#endif
-
-/* Forced function inlining */
-#ifndef ALWAYS_INLINE
-#  ifdef __GNUC__
-#    define ALWAYS_INLINE inline __attribute__((always_inline))
-#  elif defined(_MSC_VER)
-#    define ALWAYS_INLINE __forceinline
-#  else
-#    define ALWAYS_INLINE inline
-#  endif
 #endif
 
 
@@ -174,8 +162,6 @@ typedef unsigned char boolean;
 
 #elif defined(_MSC_VER)
 
-void _ReadWriteBarrier(void);
-#pragma intrinsic(_ReadWriteBarrier)
 #define PIPE_READ_WRITE_BARRIER() _ReadWriteBarrier()
 
 #else

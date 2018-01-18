@@ -5,14 +5,13 @@ env = env.Clone()
 env.MSVC2013Compat()
 
 if env['suncc']:
-	print 'warning: not building svga'
+	print('warning: not building svga')
 	Return()
 
-if env['gcc'] or env['clang']:
-	env.Append(CPPDEFINES = [
-		'HAVE_STDINT_H', 
-	])
-	
+env.Append(CPPDEFINES = [
+       'HAVE_STDINT_H',
+])
+
 env.Prepend(CPPPATH = [
 	'include',
 ])

@@ -30,6 +30,7 @@
 #include "buffers.h"
 #include "clear.h"
 #include "fbobject.h"
+#include "framebuffer.h"
 #include "glformats.h"
 #include "glheader.h"
 #include "image.h"
@@ -71,7 +72,8 @@ create_texture_for_pbo(struct gl_context *ctx,
                        const struct gl_pixelstore_attrib *packing,
                        struct gl_buffer_object **tmp_pbo, GLuint *tmp_tex)
 {
-   uint32_t pbo_format;
+   const mesa_format pbo_format =
+      _mesa_tex_format_from_format_and_type(ctx, format, type);
    GLenum internal_format;
    unsigned row_stride;
    struct gl_buffer_object *buffer_obj;
@@ -84,11 +86,7 @@ create_texture_for_pbo(struct gl_context *ctx,
        packing->Invert)
       return NULL;
 
-   pbo_format = _mesa_format_from_format_and_type(format, type);
-   if (_mesa_format_is_mesa_array_format(pbo_format))
-      pbo_format = _mesa_format_from_array_format(pbo_format);
-
-   if (!pbo_format || !ctx->TextureFormatSupported[pbo_format])
+   if (pbo_format == MESA_FORMAT_NONE)
       return NULL;
 
    /* Account for SKIP_PIXELS, SKIP_ROWS, ALIGNMENT, and SKIP_IMAGES */
@@ -138,6 +136,7 @@ create_texture_for_pbo(struct gl_context *ctx,
    _mesa_initialize_texture_object(ctx, tex_obj, *tmp_tex, GL_TEXTURE_2D);
    /* This must be set after _mesa_initialize_texture_object, not before. */
    tex_obj->Immutable = GL_TRUE;
+   tex_obj->ImmutableLevels = 1;
    /* This is required for interactions with ARB_texture_view. */
    tex_obj->NumLayers = 1;
 
@@ -174,11 +173,13 @@ _mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
                            int xoffset, int yoffset, int zoffset,
                            int width, int height, int depth,
                            GLenum format, GLenum type, const void *pixels,
-                           bool allocate_storage, bool create_pbo,
+                           bool create_pbo,
                            const struct gl_pixelstore_attrib *packing)
 {
    struct gl_buffer_object *pbo = NULL;
-   GLuint pbo_tex = 0, fbos[2] = { 0, 0 };
+   GLuint pbo_tex = 0;
+   struct gl_framebuffer *readFb = NULL;
+   struct gl_framebuffer *drawFb = NULL;
    int image_height;
    struct gl_texture_image *pbo_tex_image;
    GLenum status;
@@ -211,23 +212,28 @@ _mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
     */
    image_height = packing->ImageHeight == 0 ? height : packing->ImageHeight;
 
+   _mesa_meta_begin(ctx, ~(MESA_META_PIXEL_TRANSFER |
+                           MESA_META_PIXEL_STORE));
+
    pbo_tex_image = create_texture_for_pbo(ctx, create_pbo,
                                           GL_PIXEL_UNPACK_BUFFER,
                                           dims, width, height, depth,
                                           format, type, pixels, packing,
                                           &pbo, &pbo_tex);
-   if (!pbo_tex_image)
+   if (!pbo_tex_image) {
+      _mesa_meta_end(ctx);
       return false;
+   }
 
-   if (allocate_storage)
-      ctx->Driver.AllocTextureImageBuffer(ctx, tex_image);
+   readFb = ctx->Driver.NewFramebuffer(ctx, 0xDEADBEEF);
+   if (readFb == NULL)
+      goto fail;
 
-   _mesa_meta_begin(ctx, ~(MESA_META_PIXEL_TRANSFER |
-                           MESA_META_PIXEL_STORE));
+   drawFb = ctx->Driver.NewFramebuffer(ctx, 0xDEADBEEF);
+   if (drawFb == NULL)
+      goto fail;
 
-   _mesa_GenFramebuffers(2, fbos);
-   _mesa_BindFramebuffer(GL_READ_FRAMEBUFFER, fbos[0]);
-   _mesa_BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[1]);
+   _mesa_bind_framebuffers(ctx, drawFb, readFb);
 
    if (tex_image->TexObject->Target == GL_TEXTURE_1D_ARRAY) {
       assert(depth == 1);
@@ -239,19 +245,24 @@ _mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
       yoffset = 0;
    }
 
-   _mesa_meta_bind_fbo_image(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             pbo_tex_image, 0);
+   _mesa_meta_framebuffer_texture_image(ctx, ctx->ReadBuffer,
+                                        GL_COLOR_ATTACHMENT0,
+                                        pbo_tex_image, 0);
    /* If this passes on the first layer it should pass on the others */
-   status = _mesa_CheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+   status = _mesa_check_framebuffer_status(ctx, ctx->ReadBuffer);
    if (status != GL_FRAMEBUFFER_COMPLETE)
       goto fail;
 
-   _mesa_meta_bind_fbo_image(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             tex_image, zoffset);
+   _mesa_meta_framebuffer_texture_image(ctx, ctx->DrawBuffer,
+                                        GL_COLOR_ATTACHMENT0,
+                                        tex_image, zoffset);
    /* If this passes on the first layer it should pass on the others */
-   status = _mesa_CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+   status = _mesa_check_framebuffer_status(ctx, ctx->DrawBuffer);
    if (status != GL_FRAMEBUFFER_COMPLETE)
       goto fail;
+
+   /* Explicitly disable sRGB encoding */
+   ctx->DrawBuffer->Visual.sRGBCapable = false;
 
    _mesa_update_state(ctx);
 
@@ -263,8 +274,9 @@ _mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
       goto fail;
 
    for (z = 1; z < depth; z++) {
-      _mesa_meta_bind_fbo_image(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                tex_image, zoffset + z);
+      _mesa_meta_framebuffer_texture_image(ctx, ctx->DrawBuffer,
+                                           GL_COLOR_ATTACHMENT0,
+                                           tex_image, zoffset + z);
 
       _mesa_update_state(ctx);
 
@@ -279,7 +291,8 @@ _mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
    success = true;
 
 fail:
-   _mesa_DeleteFramebuffers(2, fbos);
+   _mesa_reference_framebuffer(&readFb, NULL);
+   _mesa_reference_framebuffer(&drawFb, NULL);
    _mesa_DeleteTextures(1, &pbo_tex);
    _mesa_reference_buffer_object(ctx, &pbo, NULL);
 
@@ -297,7 +310,9 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
                               const struct gl_pixelstore_attrib *packing)
 {
    struct gl_buffer_object *pbo = NULL;
-   GLuint pbo_tex = 0, fbos[2] = { 0, 0 };
+   GLuint pbo_tex = 0;
+   struct gl_framebuffer *readFb;
+   struct gl_framebuffer *drawFb;
    int image_height;
    struct gl_texture_image *pbo_tex_image;
    struct gl_renderbuffer *rb = NULL;
@@ -338,6 +353,9 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
        */
       if (need_signed_unsigned_int_conversion(rb->Format, format, type))
          return false;
+   } else {
+      if (need_signed_unsigned_int_conversion(tex_image->TexFormat, format, type))
+         return false;
    }
 
    /* For arrays, use a tall (height * depth) 2D texture but taking into
@@ -346,21 +364,30 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
     */
    image_height = packing->ImageHeight == 0 ? height : packing->ImageHeight;
 
+   _mesa_meta_begin(ctx, ~(MESA_META_PIXEL_TRANSFER |
+                           MESA_META_PIXEL_STORE));
+
    pbo_tex_image = create_texture_for_pbo(ctx, false, GL_PIXEL_PACK_BUFFER,
                                           dims, width, height, depth,
                                           format, type, pixels, packing,
                                           &pbo, &pbo_tex);
-   if (!pbo_tex_image)
-      return false;
 
-   _mesa_meta_begin(ctx, ~(MESA_META_PIXEL_TRANSFER |
-                           MESA_META_PIXEL_STORE));
+   if (!pbo_tex_image) {
+      _mesa_meta_end(ctx);
+      return false;
+   }
 
    /* GL_CLAMP_FRAGMENT_COLOR doesn't affect ReadPixels and GettexImage */
    if (ctx->Extensions.ARB_color_buffer_float)
       _mesa_ClampColor(GL_CLAMP_FRAGMENT_COLOR, GL_FALSE);
 
-   _mesa_GenFramebuffers(2, fbos);
+   readFb = ctx->Driver.NewFramebuffer(ctx, 0xDEADBEEF);
+   if (readFb == NULL)
+      goto fail;
+
+   drawFb = ctx->Driver.NewFramebuffer(ctx, 0xDEADBEEF);
+   if (drawFb == NULL)
+      goto fail;
 
    if (tex_image && tex_image->TexObject->Target == GL_TEXTURE_1D_ARRAY) {
       assert(depth == 1);
@@ -376,25 +403,29 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
     * we're doing a ReadPixels and we should just use whatever framebuffer
     * the client has bound.
     */
+   _mesa_bind_framebuffers(ctx, drawFb, tex_image ? readFb : ctx->ReadBuffer);
    if (tex_image) {
-      _mesa_BindFramebuffer(GL_READ_FRAMEBUFFER, fbos[0]);
-      _mesa_meta_bind_fbo_image(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                tex_image, zoffset);
+      _mesa_meta_framebuffer_texture_image(ctx, ctx->ReadBuffer,
+                                           GL_COLOR_ATTACHMENT0,
+                                           tex_image, zoffset);
       /* If this passes on the first layer it should pass on the others */
-      status = _mesa_CheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+      status = _mesa_check_framebuffer_status(ctx, ctx->ReadBuffer);
       if (status != GL_FRAMEBUFFER_COMPLETE)
          goto fail;
    } else {
       assert(depth == 1);
    }
 
-   _mesa_BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[1]);
-   _mesa_meta_bind_fbo_image(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             pbo_tex_image, 0);
+   _mesa_meta_framebuffer_texture_image(ctx, ctx->DrawBuffer,
+                                        GL_COLOR_ATTACHMENT0,
+                                        pbo_tex_image, 0);
    /* If this passes on the first layer it should pass on the others */
-   status = _mesa_CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+   status = _mesa_check_framebuffer_status(ctx, ctx->DrawBuffer);
    if (status != GL_FRAMEBUFFER_COMPLETE)
       goto fail;
+
+   /* Explicitly disable sRGB encoding */
+   ctx->DrawBuffer->Visual.sRGBCapable = false;
 
    _mesa_update_state(ctx);
 
@@ -427,8 +458,9 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
    }
 
    for (z = 1; z < depth; z++) {
-      _mesa_meta_bind_fbo_image(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                tex_image, zoffset + z);
+      _mesa_meta_framebuffer_texture_image(ctx, ctx->ReadBuffer,
+                                           GL_COLOR_ATTACHMENT0,
+                                           tex_image, zoffset + z);
 
       _mesa_update_state(ctx);
 
@@ -452,7 +484,8 @@ _mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
    success = true;
 
 fail:
-   _mesa_DeleteFramebuffers(2, fbos);
+   _mesa_reference_framebuffer(&drawFb, NULL);
+   _mesa_reference_framebuffer(&readFb, NULL);
    _mesa_DeleteTextures(1, &pbo_tex);
    _mesa_reference_buffer_object(ctx, &pbo, NULL);
 

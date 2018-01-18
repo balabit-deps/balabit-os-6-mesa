@@ -59,7 +59,6 @@ struct ptn_compile {
 
 #define SWIZ(X, Y, Z, W) \
    (unsigned[4]){ SWIZZLE_##X, SWIZZLE_##Y, SWIZZLE_##Z, SWIZZLE_##W }
-#define ptn_swizzle(b, src, x, y, z, w) nir_swizzle(b, src, SWIZ(x, y, z, w), 4, true)
 #define ptn_channel(b, src, ch) nir_swizzle(b, src, SWIZ(ch, ch, ch, ch), 1, true)
 
 static nir_ssa_def *
@@ -142,7 +141,7 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
       load->num_components = 4;
       load->variables[0] = nir_deref_var_create(load, c->input_vars[prog_src->Index]);
 
-      nir_ssa_dest_init(&load->instr, &load->dest, 4, NULL);
+      nir_ssa_dest_init(&load->instr, &load->dest, 4, 32, NULL);
       nir_builder_instr_insert(b, &load->instr);
 
       src.src = nir_src_for_ssa(&load->dest.ssa);
@@ -160,7 +159,8 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
 
       switch (file) {
       case PROGRAM_CONSTANT:
-         if ((c->prog->IndirectRegisterFiles & (1 << PROGRAM_CONSTANT)) == 0) {
+         if ((c->prog->arb.IndirectRegisterFiles &
+              (1 << PROGRAM_CONSTANT)) == 0) {
             float *v = (float *) plist->ParameterValues[prog_src->Index];
             src.src = nir_src_for_ssa(nir_imm_vec4(b, v[0], v[1], v[2], v[3]));
             break;
@@ -171,7 +171,7 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
 
          nir_intrinsic_instr *load =
             nir_intrinsic_instr_create(b->shader, nir_intrinsic_load_var);
-         nir_ssa_dest_init(&load->instr, &load->dest, 4, NULL);
+         nir_ssa_dest_init(&load->instr, &load->dest, 4, 32, NULL);
          load->num_components = 4;
 
          load->variables[0] = nir_deref_var_create(load, c->parameters);
@@ -230,9 +230,6 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
 
       def = nir_fmov_alu(b, src, 4);
 
-      if (prog_src->Abs)
-         def = nir_fabs(b, def);
-
       if (prog_src->Negate)
          def = nir_fneg(b, def);
    } else {
@@ -249,7 +246,7 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
          } else {
             assert(swizzle != SWIZZLE_NIL);
             nir_alu_instr *mov = nir_alu_instr_create(b->shader, nir_op_fmov);
-            nir_ssa_dest_init(&mov->instr, &mov->dest.dest, 1, NULL);
+            nir_ssa_dest_init(&mov->instr, &mov->dest.dest, 1, 32, NULL);
             mov->dest.write_mask = 0x1;
             mov->src[0] = src;
             mov->src[0].swizzle[0] = swizzle;
@@ -257,9 +254,6 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
 
             chans[i] = &mov->dest.dest.ssa;
          }
-
-         if (prog_src->Abs)
-            chans[i] = nir_fabs(b, chans[i]);
 
          if (prog_src->Negate & (1 << i))
             chans[i] = nir_fneg(b, chans[i]);
@@ -312,7 +306,7 @@ ptn_move_dest(nir_builder *b, nir_alu_dest dest, nir_ssa_def *def)
 static void
 ptn_arl(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
 {
-   ptn_move_dest(b, dest, nir_f2i(b, nir_ffloor(b, src[0])));
+   ptn_move_dest(b, dest, nir_f2i32(b, nir_ffloor(b, src[0])));
 }
 
 /* EXP - Approximate Exponential Base 2
@@ -452,56 +446,16 @@ ptn_sge(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
 }
 
 static void
-ptn_sle(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
-{
-   nir_ssa_def *commuted[] = { src[1], src[0] };
-   ptn_sge(b, dest, commuted);
-}
-
-static void
-ptn_sgt(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
-{
-   nir_ssa_def *commuted[] = { src[1], src[0] };
-   ptn_slt(b, dest, commuted);
-}
-
-/**
- * Emit SEQ.  For platforms with integers, prefer b2f(feq(...)).
- */
-static void
-ptn_seq(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
-{
-   if (b->shader->options->native_integers) {
-      ptn_move_dest(b, dest, nir_b2f(b, nir_feq(b, src[0], src[1])));
-   } else {
-      ptn_move_dest(b, dest, nir_seq(b, src[0], src[1]));
-   }
-}
-
-/**
- * Emit SNE.  For platforms with integers, prefer b2f(fne(...)).
- */
-static void
-ptn_sne(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
-{
-   if (b->shader->options->native_integers) {
-      ptn_move_dest(b, dest, nir_b2f(b, nir_fne(b, src[0], src[1])));
-   } else {
-      ptn_move_dest(b, dest, nir_sne(b, src[0], src[1]));
-   }
-}
-
-static void
 ptn_xpd(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
 {
    ptn_move_dest_masked(b, dest,
                         nir_fsub(b,
                                  nir_fmul(b,
-                                          ptn_swizzle(b, src[0], Y, Z, X, X),
-                                          ptn_swizzle(b, src[1], Z, X, Y, X)),
+                                          nir_swizzle(b, src[0], SWIZ(Y, Z, X, W), 3, true),
+                                          nir_swizzle(b, src[1], SWIZ(Z, X, Y, W), 3, true)),
                                  nir_fmul(b,
-                                          ptn_swizzle(b, src[1], Y, Z, X, X),
-                                          ptn_swizzle(b, src[0], Z, X, Y, X))),
+                                          nir_swizzle(b, src[1], SWIZ(Y, Z, X, W), 3, true),
+                                          nir_swizzle(b, src[0], SWIZ(Z, X, Y, W), 3, true))),
                         WRITEMASK_XYZ);
    ptn_move_dest_masked(b, dest, nir_imm_float(b, 1.0), WRITEMASK_W);
 }
@@ -551,7 +505,7 @@ ptn_lrp(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
 }
 
 static void
-ptn_kil(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src)
+ptn_kil(nir_builder *b, nir_ssa_def **src)
 {
    nir_ssa_def *cmp = b->shader->options->native_integers ?
       nir_bany_inequal4(b, nir_flt(b, src[0], nir_imm_float(b, 0.0)), nir_imm_int(b, 0)) :
@@ -589,11 +543,6 @@ ptn_tex(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src,
       num_srcs = 2;
       break;
    case OPCODE_TXP:
-      op = nir_texop_tex;
-      num_srcs = 2;
-      break;
-   case OPCODE_TXP_NV:
-      assert(!"not handled");
       op = nir_texop_tex;
       num_srcs = 2;
       break;
@@ -648,12 +597,16 @@ ptn_tex(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src,
    case GLSL_SAMPLER_DIM_CUBE:
       instr->coord_components = 3;
       break;
+   case GLSL_SAMPLER_DIM_SUBPASS:
+   case GLSL_SAMPLER_DIM_SUBPASS_MS:
+      unreachable("can't reach");
    }
 
    unsigned src_number = 0;
 
    instr->src[src_number].src =
-      nir_src_for_ssa(ptn_swizzle(b, src[0], X, Y, Z, W));
+      nir_src_for_ssa(nir_swizzle(b, src[0], SWIZ(X, Y, Z, W),
+                                  instr->coord_components, true));
    instr->src[src_number].src_type = nir_tex_src_coord;
    src_number++;
 
@@ -681,13 +634,13 @@ ptn_tex(nir_builder *b, nir_alu_dest dest, nir_ssa_def **src,
       else
          instr->src[src_number].src = nir_src_for_ssa(ptn_channel(b, src[0], W));
 
-      instr->src[src_number].src_type = nir_tex_src_comparitor;
+      instr->src[src_number].src_type = nir_tex_src_comparator;
       src_number++;
    }
 
    assert(src_number == num_srcs);
 
-   nir_ssa_dest_init(&instr->instr, &instr->dest, 4, NULL);
+   nir_ssa_dest_init(&instr->instr, &instr->dest, 4, 32, NULL);
    nir_builder_instr_insert(b, &instr->instr);
 
    /* Resolve the writemask on the texture op. */
@@ -717,7 +670,7 @@ static const nir_op op_trans[MAX_OPCODE] = {
    [OPCODE_LIT] = 0,
    [OPCODE_LOG] = 0,
    [OPCODE_LRP] = 0,
-   [OPCODE_MAD] = nir_op_ffma,
+   [OPCODE_MAD] = 0,
    [OPCODE_MAX] = nir_op_fmax,
    [OPCODE_MIN] = nir_op_fmin,
    [OPCODE_MOV] = nir_op_fmov,
@@ -727,13 +680,9 @@ static const nir_op op_trans[MAX_OPCODE] = {
 
    [OPCODE_RSQ] = 0,
    [OPCODE_SCS] = 0,
-   [OPCODE_SEQ] = 0,
    [OPCODE_SGE] = 0,
-   [OPCODE_SGT] = 0,
    [OPCODE_SIN] = 0,
-   [OPCODE_SLE] = 0,
    [OPCODE_SLT] = 0,
-   [OPCODE_SNE] = 0,
    [OPCODE_SSG] = nir_op_fsign,
    [OPCODE_SUB] = nir_op_fsub,
    [OPCODE_SWZ] = 0,
@@ -743,7 +692,6 @@ static const nir_op op_trans[MAX_OPCODE] = {
    [OPCODE_TXD] = 0,
    [OPCODE_TXL] = 0,
    [OPCODE_TXP] = 0,
-   [OPCODE_TXP_NV] = 0,
    [OPCODE_XPD] = 0,
 };
 
@@ -813,6 +761,10 @@ ptn_emit_instruction(struct ptn_compile *c, struct prog_instruction *prog_inst)
       ptn_lrp(b, dest, src);
       break;
 
+   case OPCODE_MAD:
+      ptn_move_dest(b, dest, nir_fadd(b, nir_fmul(b, src[0], src[1]), src[2]));
+      break;
+
    case OPCODE_DST:
       ptn_dst(b, dest, src);
       break;
@@ -842,7 +794,7 @@ ptn_emit_instruction(struct ptn_compile *c, struct prog_instruction *prog_inst)
       break;
 
    case OPCODE_KIL:
-      ptn_kil(b, dest, src);
+      ptn_kil(b, src);
       break;
 
    case OPCODE_CMP:
@@ -857,24 +809,8 @@ ptn_emit_instruction(struct ptn_compile *c, struct prog_instruction *prog_inst)
       ptn_slt(b, dest, src);
       break;
 
-   case OPCODE_SGT:
-      ptn_sgt(b, dest, src);
-      break;
-
-   case OPCODE_SLE:
-      ptn_sle(b, dest, src);
-      break;
-
    case OPCODE_SGE:
       ptn_sge(b, dest, src);
-      break;
-
-   case OPCODE_SEQ:
-      ptn_seq(b, dest, src);
-      break;
-
-   case OPCODE_SNE:
-      ptn_sne(b, dest, src);
       break;
 
    case OPCODE_TEX:
@@ -882,7 +818,6 @@ ptn_emit_instruction(struct ptn_compile *c, struct prog_instruction *prog_inst)
    case OPCODE_TXD:
    case OPCODE_TXL:
    case OPCODE_TXP:
-   case OPCODE_TXP_NV:
       ptn_tex(b, dest, src, prog_inst);
       break;
 
@@ -956,9 +891,9 @@ setup_registers_and_variables(struct ptn_compile *c)
    struct nir_shader *shader = b->shader;
 
    /* Create input variables. */
-   const int num_inputs = _mesa_flsll(c->prog->InputsRead);
+   const int num_inputs = util_last_bit64(c->prog->info.inputs_read);
    for (int i = 0; i < num_inputs; i++) {
-      if (!(c->prog->InputsRead & BITFIELD64_BIT(i)))
+      if (!(c->prog->info.inputs_read & BITFIELD64_BIT(i)))
          continue;
 
       nir_variable *var =
@@ -968,14 +903,9 @@ setup_registers_and_variables(struct ptn_compile *c)
       var->data.index = 0;
 
       if (c->prog->Target == GL_FRAGMENT_PROGRAM_ARB) {
-         struct gl_fragment_program *fp =
-            (struct gl_fragment_program *) c->prog;
-
-         var->data.interpolation = fp->InterpQualifier[i];
-
          if (i == VARYING_SLOT_POS) {
-            var->data.origin_upper_left = fp->OriginUpperLeft;
-            var->data.pixel_center_integer = fp->PixelCenterInteger;
+            var->data.origin_upper_left = c->prog->OriginUpperLeft;
+            var->data.pixel_center_integer = c->prog->PixelCenterInteger;
          } else if (i == VARYING_SLOT_FOGC) {
             /* fogcoord is defined as <f, 0.0, 0.0, 1.0>.  Make the actual
              * input variable a float, and create a local containing the
@@ -987,7 +917,7 @@ setup_registers_and_variables(struct ptn_compile *c)
                nir_intrinsic_instr_create(shader, nir_intrinsic_load_var);
             load_x->num_components = 1;
             load_x->variables[0] = nir_deref_var_create(load_x, var);
-            nir_ssa_dest_init(&load_x->instr, &load_x->dest, 1, NULL);
+            nir_ssa_dest_init(&load_x->instr, &load_x->dest, 1, 32, NULL);
             nir_builder_instr_insert(b, &load_x->instr);
 
             nir_ssa_def *f001 = nir_vec4(b, &load_x->dest.ssa, nir_imm_float(b, 0.0),
@@ -1017,11 +947,11 @@ setup_registers_and_variables(struct ptn_compile *c)
    }
 
    /* Create output registers and variables. */
-   int max_outputs = _mesa_fls(c->prog->OutputsWritten);
+   int max_outputs = util_last_bit(c->prog->info.outputs_written);
    c->output_regs = rzalloc_array(c, nir_register *, max_outputs);
 
    for (int i = 0; i < max_outputs; i++) {
-      if (!(c->prog->OutputsWritten & BITFIELD64_BIT(i)))
+      if (!(c->prog->info.outputs_written & BITFIELD64_BIT(i)))
          continue;
 
       /* Since we can't load from outputs in the IR, we make temporaries
@@ -1049,10 +979,11 @@ setup_registers_and_variables(struct ptn_compile *c)
    }
 
    /* Create temporary registers. */
-   c->temp_regs = rzalloc_array(c, nir_register *, c->prog->NumTemporaries);
+   c->temp_regs = rzalloc_array(c, nir_register *,
+                                c->prog->arb.NumTemporaries);
 
    nir_register *reg;
-   for (unsigned i = 0; i < c->prog->NumTemporaries; i++) {
+   for (unsigned i = 0; i < c->prog->arb.NumTemporaries; i++) {
       reg = nir_local_reg_create(b->impl);
       if (!reg) {
          c->error = true;
@@ -1086,6 +1017,10 @@ prog_to_nir(const struct gl_program *prog,
    c->prog = prog;
 
    nir_builder_init_simple_shader(&c->build, NULL, stage, options);
+
+   /* Copy the shader_info from the gl_program */
+   c->build.shader->info = prog->info;
+
    s = c->build.shader;
 
    if (prog->Parameters->NumParameters > 0) {
@@ -1102,8 +1037,8 @@ prog_to_nir(const struct gl_program *prog,
    if (unlikely(c->error))
       goto fail;
 
-   for (unsigned int i = 0; i < prog->NumInstructions; i++) {
-      ptn_emit_instruction(c, &prog->Instructions[i]);
+   for (unsigned int i = 0; i < prog->arb.NumInstructions; i++) {
+      ptn_emit_instruction(c, &prog->arb.Instructions[i]);
 
       if (unlikely(c->error))
          break;
@@ -1112,23 +1047,15 @@ prog_to_nir(const struct gl_program *prog,
    ptn_add_output_stores(c);
 
    s->info.name = ralloc_asprintf(s, "ARB%d", prog->Id);
-   s->info.num_textures = _mesa_fls(prog->SamplersUsed);
+   s->info.num_textures = util_last_bit(prog->SamplersUsed);
    s->info.num_ubos = 0;
    s->info.num_abos = 0;
    s->info.num_ssbos = 0;
    s->info.num_images = 0;
-   s->info.inputs_read = prog->InputsRead;
-   s->info.outputs_written = prog->OutputsWritten;
-   s->info.system_values_read = prog->SystemValuesRead;
    s->info.uses_texture_gather = false;
-   s->info.uses_clip_distance_out = false;
+   s->info.clip_distance_array_size = 0;
+   s->info.cull_distance_array_size = 0;
    s->info.separate_shader = false;
-
-   if (stage == MESA_SHADER_FRAGMENT) {
-      struct gl_fragment_program *fp = (struct gl_fragment_program *)prog;
-
-      s->info.fs.uses_discard = fp->UsesKill;
-   }
 
 fail:
    if (c->error) {

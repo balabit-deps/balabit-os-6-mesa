@@ -119,6 +119,42 @@ static boolean str_match_nocase_whole( const char **pcur, const char *str )
    return FALSE;
 }
 
+/* Return the array index that matches starting at *pcur, where the string at
+ * *pcur is terminated by a non-digit non-letter non-underscore.
+ * Returns -1 if no match is found.
+ *
+ * On success, the pointer to the first string is moved to the end of the read
+ * word.
+ */
+static int str_match_name_from_array(const char **pcur,
+                                     const char * const *array,
+                                     unsigned array_size)
+{
+   for (unsigned j = 0; j < array_size; ++j) {
+      if (str_match_nocase_whole(pcur, array[j]))
+         return j;
+   }
+   return -1;
+}
+
+/* Return the format corresponding to the name at *pcur.
+ * Returns -1 if there is no format name.
+ *
+ * On success, the pointer to the string is moved to the end of the read format
+ * name.
+ */
+static int str_match_format(const char **pcur)
+{
+   for (unsigned i = 0; i < PIPE_FORMAT_COUNT; i++) {
+      const struct util_format_description *desc =
+         util_format_description(i);
+      if (desc && str_match_nocase_whole(pcur, desc->name)) {
+         return i;
+      }
+   }
+   return -1;
+}
+
 /* Eat zero or more whitespaces.
  */
 static void eat_opt_white( const char **pcur )
@@ -172,14 +208,17 @@ static boolean parse_int( const char **pcur, int *val )
    return FALSE;
 }
 
-static boolean parse_identifier( const char **pcur, char *ret )
+static boolean parse_identifier( const char **pcur, char *ret, size_t len )
 {
    const char *cur = *pcur;
    int i = 0;
    if (is_alpha_underscore( cur )) {
       ret[i++] = *cur++;
-      while (is_alpha_underscore( cur ) || is_digit( cur ))
+      while (is_alpha_underscore( cur ) || is_digit( cur )) {
+         if (i == len - 1)
+            return FALSE;
          ret[i++] = *cur++;
+      }
       ret[i++] = '\0';
       *pcur = cur;
       return TRUE;
@@ -259,6 +298,42 @@ static boolean parse_double( const char **pcur, uint32_t *val0, uint32_t *val1)
    return TRUE;
 }
 
+static boolean parse_int64( const char **pcur, uint32_t *val0, uint32_t *val1)
+{
+   const char *cur = *pcur;
+   union {
+      int64_t i64val;
+      uint32_t uval[2];
+   } v;
+
+   v.i64val = strtoll(cur, (char**)pcur, 0);
+   if (*pcur == cur)
+      return FALSE;
+
+   *val0 = v.uval[0];
+   *val1 = v.uval[1];
+
+   return TRUE;
+}
+
+static boolean parse_uint64( const char **pcur, uint32_t *val0, uint32_t *val1)
+{
+   const char *cur = *pcur;
+   union {
+      uint64_t u64val;
+      uint32_t uval[2];
+   } v;
+
+   v.u64val = strtoull(cur, (char**)pcur, 0);
+   if (*pcur == cur)
+      return FALSE;
+
+   *val0 = v.uval[0];
+   *val1 = v.uval[1];
+
+   return TRUE;
+}
+
 struct translate_ctx
 {
    const char *text;
@@ -301,17 +376,17 @@ static boolean parse_header( struct translate_ctx *ctx )
    uint processor;
 
    if (str_match_nocase_whole( &ctx->cur, "FRAG" ))
-      processor = TGSI_PROCESSOR_FRAGMENT;
+      processor = PIPE_SHADER_FRAGMENT;
    else if (str_match_nocase_whole( &ctx->cur, "VERT" ))
-      processor = TGSI_PROCESSOR_VERTEX;
+      processor = PIPE_SHADER_VERTEX;
    else if (str_match_nocase_whole( &ctx->cur, "GEOM" ))
-      processor = TGSI_PROCESSOR_GEOMETRY;
+      processor = PIPE_SHADER_GEOMETRY;
    else if (str_match_nocase_whole( &ctx->cur, "TESS_CTRL" ))
-      processor = TGSI_PROCESSOR_TESS_CTRL;
+      processor = PIPE_SHADER_TESS_CTRL;
    else if (str_match_nocase_whole( &ctx->cur, "TESS_EVAL" ))
-      processor = TGSI_PROCESSOR_TESS_EVAL;
+      processor = PIPE_SHADER_TESS_EVAL;
    else if (str_match_nocase_whole( &ctx->cur, "COMP" ))
-      processor = TGSI_PROCESSOR_COMPUTE;
+      processor = PIPE_SHADER_COMPUTE;
    else {
       report_error( ctx, "Unknown header" );
       return FALSE;
@@ -698,9 +773,9 @@ parse_register_dcl(
        * the second bracket */
 
       /* tessellation has similar constraints to geometry shader */
-      if ((ctx->processor == TGSI_PROCESSOR_GEOMETRY && is_in) ||
-          (ctx->processor == TGSI_PROCESSOR_TESS_EVAL && is_in) ||
-          (ctx->processor == TGSI_PROCESSOR_TESS_CTRL && (is_in || is_out))) {
+      if ((ctx->processor == PIPE_SHADER_GEOMETRY && is_in) ||
+          (ctx->processor == PIPE_SHADER_TESS_EVAL && is_in) ||
+          (ctx->processor == PIPE_SHADER_TESS_CTRL && (is_in || is_out))) {
          brackets[0] = brackets[1];
          *num_brackets = 1;
       } else {
@@ -924,6 +999,7 @@ parse_texoffset_operand(
 static boolean
 match_inst(const char **pcur,
            unsigned *saturate,
+           unsigned *precise,
            const struct tgsi_opcode_info *info)
 {
    const char *cur = *pcur;
@@ -932,16 +1008,24 @@ match_inst(const char **pcur,
    if (str_match_nocase_whole(&cur, info->mnemonic)) {
       *pcur = cur;
       *saturate = 0;
+      *precise = 0;
       return TRUE;
    }
 
    if (str_match_no_case(&cur, info->mnemonic)) {
       /* the instruction has a suffix, figure it out */
-      if (str_match_nocase_whole(&cur, "_SAT")) {
+      if (str_match_no_case(&cur, "_SAT")) {
          *pcur = cur;
          *saturate = 1;
-         return TRUE;
       }
+
+      if (str_match_no_case(&cur, "_PRECISE")) {
+         *pcur = cur;
+         *precise = 1;
+      }
+
+      if (!is_digit_alpha_underscore(cur))
+         return TRUE;
    }
 
    return FALSE;
@@ -954,49 +1038,13 @@ parse_instruction(
 {
    uint i;
    uint saturate = 0;
+   uint precise = 0;
    const struct tgsi_opcode_info *info;
    struct tgsi_full_instruction inst;
    const char *cur;
    uint advance;
 
    inst = tgsi_default_full_instruction();
-
-   /* Parse predicate.
-    */
-   eat_opt_white( &ctx->cur );
-   if (*ctx->cur == '(') {
-      uint file;
-      int index;
-      uint swizzle[4];
-      boolean parsed_swizzle;
-
-      inst.Instruction.Predicate = 1;
-
-      ctx->cur++;
-      if (*ctx->cur == '!') {
-         ctx->cur++;
-         inst.Predicate.Negate = 1;
-      }
-
-      if (!parse_register_1d( ctx, &file, &index ))
-         return FALSE;
-
-      if (parse_optional_swizzle( ctx, swizzle, &parsed_swizzle, 4 )) {
-         if (parsed_swizzle) {
-            inst.Predicate.SwizzleX = swizzle[0];
-            inst.Predicate.SwizzleY = swizzle[1];
-            inst.Predicate.SwizzleZ = swizzle[2];
-            inst.Predicate.SwizzleW = swizzle[3];
-         }
-      }
-
-      if (*ctx->cur != ')') {
-         report_error( ctx, "Expected `)'" );
-         return FALSE;
-      }
-
-      ctx->cur++;
-   }
 
    /* Parse instruction name.
     */
@@ -1005,7 +1053,7 @@ parse_instruction(
       cur = ctx->cur;
 
       info = tgsi_get_opcode_info( i );
-      if (match_inst(&cur, &saturate, info)) {
+      if (match_inst(&cur, &saturate, &precise, info)) {
          if (info->num_dst + info->num_src + info->is_tex == 0) {
             ctx->cur = cur;
             break;
@@ -1026,6 +1074,7 @@ parse_instruction(
 
    inst.Instruction.Opcode = i;
    inst.Instruction.Saturate = saturate;
+   inst.Instruction.Precise = precise;
    inst.Instruction.NumDstRegs = info->num_dst;
    inst.Instruction.NumSrcRegs = info->num_src;
 
@@ -1044,6 +1093,9 @@ parse_instruction(
       inst.Instruction.Memory = 1;
       inst.Memory.Qualifier = 0;
    }
+
+   assume(info->num_dst <= TGSI_FULL_MAX_DST_REGISTERS);
+   assume(info->num_src <= TGSI_FULL_MAX_SRC_REGISTERS);
 
    /* Parse instruction operands.
     */
@@ -1085,7 +1137,7 @@ parse_instruction(
 
    cur = ctx->cur;
    eat_opt_white( &cur );
-   for (i = 0; inst.Instruction.Texture && *cur == ','; i++) {
+   for (i = 0; inst.Instruction.Texture && *cur == ',' && i < TGSI_FULL_MAX_TEX_OFFSETS; i++) {
          cur++;
          eat_opt_white( &cur );
          ctx->cur = cur;
@@ -1098,23 +1150,37 @@ parse_instruction(
 
    cur = ctx->cur;
    eat_opt_white(&cur);
-   for (i = 0; inst.Instruction.Memory && *cur == ','; i++) {
-      uint j;
+
+   for (; inst.Instruction.Memory && *cur == ',';
+        ctx->cur = cur, eat_opt_white(&cur)) {
+      int j;
+
       cur++;
       eat_opt_white(&cur);
+
+      j = str_match_name_from_array(&cur, tgsi_memory_names,
+                                    ARRAY_SIZE(tgsi_memory_names));
+      if (j >= 0) {
+         inst.Memory.Qualifier |= 1U << j;
+         continue;
+      }
+
+      j = str_match_name_from_array(&cur, tgsi_texture_names,
+                                    ARRAY_SIZE(tgsi_texture_names));
+      if (j >= 0) {
+         inst.Memory.Texture = j;
+         continue;
+      }
+
+      j = str_match_format(&cur);
+      if (j >= 0) {
+         inst.Memory.Format = j;
+         continue;
+      }
+
       ctx->cur = cur;
-      for (j = 0; j < 3; j++) {
-         if (str_match_nocase_whole(&ctx->cur, tgsi_memory_names[j])) {
-            inst.Memory.Qualifier |= 1U << j;
-            break;
-         }
-      }
-      if (j == 3) {
-         report_error(ctx, "Expected memory qualifier");
-         return FALSE;
-      }
-      cur = ctx->cur;
-      eat_opt_white(&cur);
+      report_error(ctx, "Expected memory qualifier, texture target, or format\n");
+      return FALSE;
    }
 
    cur = ctx->cur;
@@ -1173,6 +1239,14 @@ static boolean parse_immediate_data(struct translate_ctx *ctx, unsigned type,
       switch (type) {
       case TGSI_IMM_FLOAT64:
          ret = parse_double(&ctx->cur, &values[i].Uint, &values[i+1].Uint);
+         i++;
+         break;
+      case TGSI_IMM_INT64:
+         ret = parse_int64(&ctx->cur, &values[i].Uint, &values[i+1].Uint);
+         i++;
+         break;
+      case TGSI_IMM_UINT64:
+         ret = parse_uint64(&ctx->cur, &values[i].Uint, &values[i+1].Uint);
          i++;
          break;
       case TGSI_IMM_FLOAT32:
@@ -1241,7 +1315,7 @@ static boolean parse_declaration( struct translate_ctx *ctx )
    }
 
    is_vs_input = (file == TGSI_FILE_INPUT &&
-                  ctx->processor == TGSI_PROCESSOR_VERTEX);
+                  ctx->processor == PIPE_SHADER_VERTEX);
 
    cur = ctx->cur;
    eat_opt_white( &cur );
@@ -1302,16 +1376,11 @@ static boolean parse_declaration( struct translate_ctx *ctx )
                decl.Image.Writable = 1;
 
             } else {
-               for (i = 0; i < PIPE_FORMAT_COUNT; i++) {
-                  const struct util_format_description *desc =
-                     util_format_description(i);
-                  if (desc && str_match_nocase_whole(&cur2, desc->name)) {
-                     decl.Image.Format = i;
-                     break;
-                  }
-               }
-               if (i == PIPE_FORMAT_COUNT)
+               int format = str_match_format(&cur2);
+               if (format < 0)
                   break;
+
+               decl.Image.Format = format;
             }
             cur = cur2;
             eat_opt_white(&cur2);
@@ -1390,8 +1459,18 @@ static boolean parse_declaration( struct translate_ctx *ctx )
             ctx->cur = cur;
          }
       } else if (file == TGSI_FILE_MEMORY) {
-         if (str_match_nocase_whole(&cur, "SHARED")) {
-            decl.Declaration.Shared = 1;
+         if (str_match_nocase_whole(&cur, "GLOBAL")) {
+            /* Note this is a no-op global is the default */
+            decl.Declaration.MemType = TGSI_MEMORY_TYPE_GLOBAL;
+            ctx->cur = cur;
+         } else if (str_match_nocase_whole(&cur, "SHARED")) {
+            decl.Declaration.MemType = TGSI_MEMORY_TYPE_SHARED;
+            ctx->cur = cur;
+         } else if (str_match_nocase_whole(&cur, "PRIVATE")) {
+            decl.Declaration.MemType = TGSI_MEMORY_TYPE_PRIVATE;
+            ctx->cur = cur;
+         } else if (str_match_nocase_whole(&cur, "INPUT")) {
+            decl.Declaration.MemType = TGSI_MEMORY_TYPE_INPUT;
             ctx->cur = cur;
          }
       } else {
@@ -1439,6 +1518,54 @@ static boolean parse_declaration( struct translate_ctx *ctx )
                }
             }
          }
+      }
+   }
+
+   cur = ctx->cur;
+   eat_opt_white( &cur );
+   if (*cur == ',' &&
+       file == TGSI_FILE_OUTPUT && ctx->processor == PIPE_SHADER_GEOMETRY) {
+      cur++;
+      eat_opt_white(&cur);
+      if (str_match_nocase_whole(&cur, "STREAM")) {
+         uint stream[4];
+
+         eat_opt_white(&cur);
+         if (*cur != '(') {
+            report_error(ctx, "Expected '('");
+            return FALSE;
+         }
+         cur++;
+
+         for (int i = 0; i < 4; ++i) {
+            eat_opt_white(&cur);
+            if (!parse_uint(&cur, &stream[i])) {
+               report_error(ctx, "Expected literal integer");
+               return FALSE;
+            }
+
+            eat_opt_white(&cur);
+            if (i < 3) {
+               if (*cur != ',') {
+                  report_error(ctx, "Expected ','");
+                  return FALSE;
+               }
+               cur++;
+            }
+         }
+
+         if (*cur != ')') {
+            report_error(ctx, "Expected ')'");
+            return FALSE;
+         }
+         cur++;
+
+         decl.Semantic.StreamX = stream[0];
+         decl.Semantic.StreamY = stream[1];
+         decl.Semantic.StreamZ = stream[2];
+         decl.Semantic.StreamW = stream[3];
+
+         ctx->cur = cur;
       }
    }
 
@@ -1529,11 +1656,11 @@ static boolean parse_immediate( struct translate_ctx *ctx )
       report_error( ctx, "Syntax error" );
       return FALSE;
    }
-   for (type = 0; type < Elements(tgsi_immediate_type_names); ++type) {
+   for (type = 0; type < ARRAY_SIZE(tgsi_immediate_type_names); ++type) {
       if (str_match_nocase_whole(&ctx->cur, tgsi_immediate_type_names[type]))
          break;
    }
-   if (type == Elements(tgsi_immediate_type_names)) {
+   if (type == ARRAY_SIZE(tgsi_immediate_type_names)) {
       report_error( ctx, "Expected immediate type" );
       return FALSE;
    }
@@ -1579,7 +1706,7 @@ parse_fs_coord_origin( const char **pcur, uint *fs_coord_origin )
 {
    uint i;
 
-   for (i = 0; i < Elements(tgsi_fs_coord_origin_names); i++) {
+   for (i = 0; i < ARRAY_SIZE(tgsi_fs_coord_origin_names); i++) {
       const char *cur = *pcur;
 
       if (str_match_nocase_whole( &cur, tgsi_fs_coord_origin_names[i])) {
@@ -1596,7 +1723,7 @@ parse_fs_coord_pixel_center( const char **pcur, uint *fs_coord_pixel_center )
 {
    uint i;
 
-   for (i = 0; i < Elements(tgsi_fs_coord_pixel_center_names); i++) {
+   for (i = 0; i < ARRAY_SIZE(tgsi_fs_coord_pixel_center_names); i++) {
       const char *cur = *pcur;
 
       if (str_match_nocase_whole( &cur, tgsi_fs_coord_pixel_center_names[i])) {
@@ -1608,6 +1735,22 @@ parse_fs_coord_pixel_center( const char **pcur, uint *fs_coord_pixel_center )
    return FALSE;
 }
 
+static boolean
+parse_property_next_shader( const char **pcur, uint *next_shader )
+{
+   uint i;
+
+   for (i = 0; i < ARRAY_SIZE(tgsi_processor_type_names); i++) {
+      const char *cur = *pcur;
+
+      if (str_match_nocase_whole( &cur, tgsi_processor_type_names[i])) {
+         *next_shader = i;
+         *pcur = cur;
+         return TRUE;
+      }
+   }
+   return FALSE;
+}
 
 static boolean parse_property( struct translate_ctx *ctx )
 {
@@ -1621,7 +1764,7 @@ static boolean parse_property( struct translate_ctx *ctx )
       report_error( ctx, "Syntax error" );
       return FALSE;
    }
-   if (!parse_identifier( &ctx->cur, id )) {
+   if (!parse_identifier( &ctx->cur, id, sizeof(id) )) {
       report_error( ctx, "Syntax error" );
       return FALSE;
    }
@@ -1645,7 +1788,7 @@ static boolean parse_property( struct translate_ctx *ctx )
          return FALSE;
       }
       if (property_name == TGSI_PROPERTY_GS_INPUT_PRIM &&
-          ctx->processor == TGSI_PROCESSOR_GEOMETRY) {
+          ctx->processor == PIPE_SHADER_GEOMETRY) {
          ctx->implied_array_size = u_vertices_per_prim(values[0]);
       }
       break;
@@ -1658,6 +1801,12 @@ static boolean parse_property( struct translate_ctx *ctx )
    case TGSI_PROPERTY_FS_COORD_PIXEL_CENTER:
       if (!parse_fs_coord_pixel_center(&ctx->cur, &values[0] )) {
          report_error( ctx, "Unknown coord pixel center as property: must be HALF_INTEGER or INTEGER!" );
+         return FALSE;
+      }
+      break;
+   case TGSI_PROPERTY_NEXT_SHADER:
+      if (!parse_property_next_shader(&ctx->cur, &values[0] )) {
+         report_error( ctx, "Unknown next shader property value." );
          return FALSE;
       }
       break;
@@ -1693,8 +1842,8 @@ static boolean translate( struct translate_ctx *ctx )
    if (!parse_header( ctx ))
       return FALSE;
 
-   if (ctx->processor == TGSI_PROCESSOR_TESS_CTRL ||
-       ctx->processor == TGSI_PROCESSOR_TESS_EVAL)
+   if (ctx->processor == PIPE_SHADER_TESS_CTRL ||
+       ctx->processor == PIPE_SHADER_TESS_EVAL)
        ctx->implied_array_size = 32;
 
    while (*ctx->cur != '\0') {

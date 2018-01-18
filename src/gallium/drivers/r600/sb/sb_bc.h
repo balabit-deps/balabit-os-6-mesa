@@ -787,13 +787,12 @@ public: \
 	} \
 	unsigned get_##name() const { \
 		return (value>>(first_bit))&((1ull<<((last_bit)-(first_bit)+1))-1); \
-	} \
+	}
 
 #define BC_RSRVD(fmt, last_bit, first_bit)
 
 // CLAMP macro defined elsewhere interferes with bytecode field name
 #undef CLAMP
-#undef ARRAY_SIZE
 #include "sb_bc_fmt_def.inc"
 
 #undef BC_FORMAT_BEGIN

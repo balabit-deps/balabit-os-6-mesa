@@ -28,6 +28,7 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <wayland-client.h>
 #include "wayland-egl.h"
@@ -54,6 +55,7 @@ WL_EGL_EXPORT struct wl_egl_window *
 wl_egl_window_create(struct wl_surface *surface,
 		     int width, int height)
 {
+	struct wl_egl_window _INIT_ = { .version = WL_EGL_WINDOW_VERSION };
 	struct wl_egl_window *egl_window;
 
 	if (width <= 0 || height <= 0)
@@ -63,9 +65,12 @@ wl_egl_window_create(struct wl_surface *surface,
 	if (!egl_window)
 		return NULL;
 
+	memcpy(egl_window, &_INIT_, sizeof *egl_window);
+
 	egl_window->surface = surface;
 	egl_window->private = NULL;
 	egl_window->resize_callback = NULL;
+	egl_window->destroy_window_callback = NULL;
 	wl_egl_window_resize(egl_window, width, height, 0, 0);
 	egl_window->attached_width  = 0;
 	egl_window->attached_height = 0;
@@ -76,6 +81,8 @@ wl_egl_window_create(struct wl_surface *surface,
 WL_EGL_EXPORT void
 wl_egl_window_destroy(struct wl_egl_window *egl_window)
 {
+	if (egl_window->destroy_window_callback)
+		egl_window->destroy_window_callback(egl_window->private);
 	free(egl_window);
 }
 

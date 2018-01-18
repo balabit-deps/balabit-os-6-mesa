@@ -132,15 +132,13 @@
  */
 #define MAX_TEXTURE_UNITS ((MAX_TEXTURE_COORD_UNITS > MAX_TEXTURE_IMAGE_UNITS) ? MAX_TEXTURE_COORD_UNITS : MAX_TEXTURE_IMAGE_UNITS)
 
-
-/** Maximum viewport size */
-#define MAX_VIEWPORT_WIDTH 16384
-#define MAX_VIEWPORT_HEIGHT 16384
-
-/** Maximun number of viewports supported with ARB_viewport_array */
+/** Maximum number of viewports supported with ARB_viewport_array */
 #define MAX_VIEWPORTS 16
 
-/** Maxmimum size for CVA.  May be overridden by the drivers.  */
+/** Maximum number of window rectangles supported with EXT_window_rectangles */
+#define MAX_WINDOW_RECTANGLES 8
+
+/** Maximum size for CVA.  May be overridden by the drivers.  */
 #define MAX_ARRAY_LOCK_SIZE 3000
 
 /** Subpixel precision for antialiasing, window coordinate snapping */
@@ -200,7 +198,6 @@
 #define MAX_PROGRAM_CALL_DEPTH         8
 #define MAX_PROGRAM_TEMPS              256
 #define MAX_PROGRAM_ADDRESS_REGS       1
-#define MAX_VARYING                    32    /**< number of float[4] vectors */
 #define MAX_SAMPLERS                   MAX_TEXTURE_IMAGE_UNITS
 #define MAX_PROGRAM_INPUTS             32
 #define MAX_PROGRAM_OUTPUTS            64

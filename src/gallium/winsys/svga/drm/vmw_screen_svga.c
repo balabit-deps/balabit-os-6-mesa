@@ -32,6 +32,7 @@
  * @author Jose Fonseca
  */
 
+#include <libsync.h>
 
 #include "svga_cmd.h"
 #include "svga3d_caps.h"
@@ -123,13 +124,43 @@ vmw_svga_winsys_fence_signalled(struct svga_winsys_screen *sws,
 static int
 vmw_svga_winsys_fence_finish(struct svga_winsys_screen *sws,
                              struct pipe_fence_handle *fence,
+                             uint64_t timeout,
                              unsigned flag)
 {
    struct vmw_winsys_screen *vws = vmw_winsys_screen(sws);
 
-   return vmw_fence_finish(vws, fence, flag);
+   return vmw_fence_finish(vws, fence, timeout, flag);
 }
 
+
+static int
+vmw_svga_winsys_fence_get_fd(struct svga_winsys_screen *sws,
+                             struct pipe_fence_handle *fence,
+                             boolean duplicate)
+{
+   if (duplicate)
+      return dup(vmw_fence_get_fd(fence));
+   else
+      return vmw_fence_get_fd(fence);
+}
+
+
+static void
+vmw_svga_winsys_fence_create_fd(struct svga_winsys_screen *sws,
+                                struct pipe_fence_handle **fence,
+                                int32_t fd)
+{
+   *fence = vmw_fence_create(NULL, 0, 0, 0, dup(fd));
+}
+
+static int
+vmw_svga_winsys_fence_server_sync(struct svga_winsys_screen *sws,
+                                  int32_t *context_fd,
+                                  struct pipe_fence_handle *fence)
+{
+   return sync_accumulate("vmwgfx", context_fd,
+                          sws->fence_get_fd(sws, fence, FALSE));
+}
 
 
 static struct svga_winsys_surface *
@@ -156,7 +187,7 @@ vmw_svga_winsys_surface_create(struct svga_winsys_screen *sws,
    pipe_reference_init(&surface->refcnt, 1);
    p_atomic_set(&surface->validated, 0);
    surface->screen = vws;
-   pipe_mutex_init(surface->mutex);
+   (void) mtx_init(&surface->mutex, mtx_plain);
    surface->shared = !!(usage & SVGA_SURFACE_USAGE_SHARED);
    provider = (surface->shared) ? vws->pools.gmr : vws->pools.mob_fenced;
 
@@ -200,22 +231,25 @@ vmw_svga_winsys_surface_create(struct svga_winsys_screen *sws,
                                                  surface->buf ? NULL :
 						 &desc.region);
 
-      if (surface->sid == SVGA3D_INVALID_ID && surface->buf) {
-
-         /*
-          * Kernel refused to allocate a surface for us.
-          * Perhaps something was wrong with our buffer?
-          * This is really a guard against future new size requirements
-          * on the backing buffers.
-          */
-         vmw_svga_winsys_buffer_destroy(sws, surface->buf);
-         surface->buf = NULL;
-         surface->sid = vmw_ioctl_gb_surface_create(vws, flags, format, usage,
-                                                    size, numLayers,
-                                                    numMipLevels, sampleCount,
-                                                    0, &desc.region);
-         if (surface->sid == SVGA3D_INVALID_ID)
+      if (surface->sid == SVGA3D_INVALID_ID) {
+         if (surface->buf == NULL) {
             goto no_sid;
+         } else {
+            /*
+             * Kernel refused to allocate a surface for us.
+             * Perhaps something was wrong with our buffer?
+             * This is really a guard against future new size requirements
+             * on the backing buffers.
+             */
+            vmw_svga_winsys_buffer_destroy(sws, surface->buf);
+            surface->buf = NULL;
+            surface->sid = vmw_ioctl_gb_surface_create(vws, flags, format, usage,
+                                                       size, numLayers,
+                                                       numMipLevels, sampleCount,
+                                                       0, &desc.region);
+            if (surface->sid == SVGA3D_INVALID_ID)
+               goto no_sid;
+         }
       }
 
       /*
@@ -395,6 +429,22 @@ vmw_svga_winsys_shader_destroy(struct svga_winsys_screen *sws,
    vmw_svga_winsys_shader_reference(&d_shader, NULL);
 }
 
+static void
+vmw_svga_winsys_stats_inc(enum svga_stats_count index)
+{
+}
+
+static void
+vmw_svga_winsys_stats_time_push(enum svga_stats_time index,
+                                struct svga_winsys_stats_timeframe *tf)
+{
+}
+
+static void
+vmw_svga_winsys_stats_time_pop()
+{
+}
+
 boolean
 vmw_winsys_screen_init_svga(struct vmw_winsys_screen *vws)
 {
@@ -415,11 +465,18 @@ vmw_winsys_screen_init_svga(struct vmw_winsys_screen *vws)
    vws->base.shader_create = vmw_svga_winsys_shader_create;
    vws->base.shader_destroy = vmw_svga_winsys_shader_destroy;
    vws->base.fence_finish = vmw_svga_winsys_fence_finish;
+   vws->base.fence_get_fd = vmw_svga_winsys_fence_get_fd;
+   vws->base.fence_create_fd = vmw_svga_winsys_fence_create_fd;
+   vws->base.fence_server_sync = vmw_svga_winsys_fence_server_sync;
 
    vws->base.query_create = vmw_svga_winsys_query_create;
    vws->base.query_init = vmw_svga_winsys_query_init;
    vws->base.query_destroy = vmw_svga_winsys_query_destroy;
    vws->base.query_get_result = vmw_svga_winsys_query_get_result;
+
+   vws->base.stats_inc = vmw_svga_winsys_stats_inc;
+   vws->base.stats_time_push = vmw_svga_winsys_stats_time_push;
+   vws->base.stats_time_pop = vmw_svga_winsys_stats_time_pop;
 
    return TRUE;
 }

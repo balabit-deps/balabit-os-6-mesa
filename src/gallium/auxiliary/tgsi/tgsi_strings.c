@@ -34,8 +34,8 @@
 
 const char *tgsi_processor_type_names[6] =
 {
-   "FRAG",
    "VERT",
+   "FRAG",
    "GEOM",
    "TESS_CTRL",
    "TESS_EVAL",
@@ -52,7 +52,6 @@ static const char *tgsi_file_names[] =
    "SAMP",
    "ADDR",
    "IMM",
-   "PRED",
    "SV",
    "IMAGE",
    "SVIEW",
@@ -85,7 +84,6 @@ const char *tgsi_semantic_names[TGSI_SEMANTIC_COUNT] =
    "PCOORD",
    "VIEWPORT_INDEX",
    "LAYER",
-   "CULLDIST",
    "SAMPLEID",
    "SAMPLEPOS",
    "SAMPLEMASK",
@@ -100,6 +98,14 @@ const char *tgsi_semantic_names[TGSI_SEMANTIC_COUNT] =
    "HELPER_INVOCATION",
    "BASEINSTANCE",
    "DRAWID",
+   "WORK_DIM",
+   "SUBGROUP_SIZE",
+   "SUBGROUP_INVOCATION",
+   "SUBGROUP_EQ_MASK",
+   "SUBGROUP_GE_MASK",
+   "SUBGROUP_GT_MASK",
+   "SUBGROUP_LE_MASK",
+   "SUBGROUP_LT_MASK",
 };
 
 const char *tgsi_texture_names[TGSI_TEXTURE_COUNT] =
@@ -144,6 +150,13 @@ const char *tgsi_property_names[TGSI_PROPERTY_COUNT] =
    "TES_POINT_MODE",
    "NUM_CLIPDIST_ENABLED",
    "NUM_CULLDIST_ENABLED",
+   "FS_EARLY_DEPTH_STENCIL",
+   "FS_POST_DEPTH_COVERAGE",
+   "NEXT_SHADER",
+   "CS_FIXED_BLOCK_WIDTH",
+   "CS_FIXED_BLOCK_HEIGHT",
+   "CS_FIXED_BLOCK_DEPTH",
+   "MUL_ZERO_WINS",
 };
 
 const char *tgsi_return_type_names[TGSI_RETURN_TYPE_COUNT] =
@@ -201,12 +214,14 @@ const char *tgsi_fs_coord_pixel_center_names[2] =
    "INTEGER"
 };
 
-const char *tgsi_immediate_type_names[4] =
+const char *tgsi_immediate_type_names[6] =
 {
    "FLT32",
    "UINT32",
    "INT32",
-   "FLT64"
+   "FLT64",
+   "UINT64",
+   "INT64",
 };
 
 const char *tgsi_memory_names[3] =
@@ -220,12 +235,12 @@ const char *tgsi_memory_names[3] =
 static inline void
 tgsi_strings_check(void)
 {
-   STATIC_ASSERT(Elements(tgsi_semantic_names) == TGSI_SEMANTIC_COUNT);
-   STATIC_ASSERT(Elements(tgsi_texture_names) == TGSI_TEXTURE_COUNT);
-   STATIC_ASSERT(Elements(tgsi_property_names) == TGSI_PROPERTY_COUNT);
-   STATIC_ASSERT(Elements(tgsi_primitive_names) == PIPE_PRIM_MAX);
-   STATIC_ASSERT(Elements(tgsi_interpolate_names) == TGSI_INTERPOLATE_COUNT);
-   STATIC_ASSERT(Elements(tgsi_return_type_names) == TGSI_RETURN_TYPE_COUNT);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_semantic_names) == TGSI_SEMANTIC_COUNT);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_texture_names) == TGSI_TEXTURE_COUNT);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_property_names) == TGSI_PROPERTY_COUNT);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_primitive_names) == PIPE_PRIM_MAX);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_interpolate_names) == TGSI_INTERPOLATE_COUNT);
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_return_type_names) == TGSI_RETURN_TYPE_COUNT);
    (void) tgsi_processor_type_names;
    (void) tgsi_return_type_names;
    (void) tgsi_immediate_type_names;
@@ -237,8 +252,8 @@ tgsi_strings_check(void)
 const char *
 tgsi_file_name(unsigned file)
 {
-   STATIC_ASSERT(Elements(tgsi_file_names) == TGSI_FILE_COUNT);
-   if (file < Elements(tgsi_file_names))
+   STATIC_ASSERT(ARRAY_SIZE(tgsi_file_names) == TGSI_FILE_COUNT);
+   if (file < ARRAY_SIZE(tgsi_file_names))
       return tgsi_file_names[file];
    else
       return "invalid file";

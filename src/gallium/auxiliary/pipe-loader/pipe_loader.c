@@ -51,7 +51,7 @@ pipe_loader_probe(struct pipe_loader_device **devs, int ndev)
 {
    int i, n = 0;
 
-   for (i = 0; i < Elements(backends); i++)
+   for (i = 0; i < ARRAY_SIZE(backends); i++)
       n += backends[i](&devs[n], MAX2(0, ndev - n));
 
    return n;
@@ -74,9 +74,9 @@ pipe_loader_configuration(struct pipe_loader_device *dev,
 }
 
 struct pipe_screen *
-pipe_loader_create_screen(struct pipe_loader_device *dev)
+pipe_loader_create_screen(struct pipe_loader_device *dev, unsigned flags)
 {
-   return dev->ops->create_screen(dev);
+   return dev->ops->create_screen(dev, flags);
 }
 
 struct util_dl_library *

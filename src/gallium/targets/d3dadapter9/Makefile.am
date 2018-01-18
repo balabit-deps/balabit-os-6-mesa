@@ -27,12 +27,18 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/src/loader \
 	-I$(top_srcdir)/src/mapi/ \
 	-I$(top_srcdir)/src/mesa/ \
-	-I$(top_srcdir)/src/mesa/drivers/dri/common/ \
 	-I$(top_builddir)/src/mesa/drivers/dri/common/ \
+	-I$(top_srcdir)/src/mesa/drivers/dri/common/ \
 	-I$(top_srcdir)/src/gallium/winsys \
 	-I$(top_srcdir)/src/gallium/state_trackers/nine \
 	$(GALLIUM_TARGET_CFLAGS) \
 	$(VISIBILITY_CFLAGS)
+
+AM_CPPFLAGS = \
+	$(DEFINES) \
+	-DGALLIUM_DDEBUG \
+	-DGALLIUM_RBUG \
+	-DGALLIUM_TRACE
 
 ninedir = $(D3D_DRIVER_INSTALL_DIR)
 nine_LTLIBRARIES = d3dadapter9.la
@@ -64,6 +70,9 @@ d3dadapter9_la_LIBADD = \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
 	$(top_builddir)/src/gallium/state_trackers/nine/libninetracker.la \
 	$(top_builddir)/src/util/libmesautil.la \
+	$(top_builddir)/src/gallium/drivers/ddebug/libddebug.la \
+	$(top_builddir)/src/gallium/drivers/rbug/librbug.la \
+	$(top_builddir)/src/gallium/drivers/trace/libtrace.la \
 	$(EXPAT_LIBS) \
 	$(GALLIUM_COMMON_LIB_DEPS)
 
@@ -75,8 +84,6 @@ TARGET_CPPFLAGS =
 TARGET_LIB_DEPS =
 
 include $(top_srcdir)/src/gallium/drivers/i915/Automake.inc
-
-include $(top_srcdir)/src/gallium/drivers/ilo/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/nouveau/Automake.inc
 
@@ -105,7 +112,7 @@ d3dadapter9_la_LIBADD += \
 
 endif # HAVE_GALLIUM_STATIC_TARGETS
 
-if HAVE_MESA_LLVM
+if HAVE_GALLIUM_LLVM
 nodist_EXTRA_d3dadapter9_la_SOURCES = dummy.cpp
 d3dadapter9_la_LDFLAGS += $(LLVM_LDFLAGS)
 d3dadapter9_la_LIBADD += $(LLVM_LIBS)

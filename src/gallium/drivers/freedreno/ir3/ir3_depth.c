@@ -74,8 +74,7 @@ int ir3_delayslots(struct ir3_instruction *assigner,
 	if (is_flow(consumer) || is_sfu(consumer) || is_tex(consumer) ||
 			is_mem(consumer)) {
 		return 6;
-	} else if ((consumer->category == 3) &&
-			(is_mad(consumer->opc) || is_madsh(consumer->opc)) &&
+	} else if ((is_mad(consumer->opc) || is_madsh(consumer->opc)) &&
 			(n == 3)) {
 		/* special case, 3rd src to cat3 not required on first cycle */
 		return 1;
@@ -138,7 +137,7 @@ remove_unused_by_block(struct ir3_block *block)
 {
 	list_for_each_entry_safe (struct ir3_instruction, instr, &block->instr_list, node) {
 		if (!ir3_instr_check_mark(instr)) {
-			if (is_flow(instr) && (instr->opc == OPC_END))
+			if (instr->opc == OPC_END)
 				continue;
 			/* mark it, in case it is input, so we can
 			 * remove unused inputs:
@@ -160,11 +159,11 @@ ir3_depth(struct ir3 *ir)
 		if (ir->outputs[i])
 			ir3_instr_depth(ir->outputs[i]);
 
-	for (i = 0; i < ir->keeps_count; i++)
-		ir3_instr_depth(ir->keeps[i]);
-
-	/* We also need to account for if-condition: */
 	list_for_each_entry (struct ir3_block, block, &ir->block_list, node) {
+		for (i = 0; i < block->keeps_count; i++)
+			ir3_instr_depth(block->keeps[i]);
+
+		/* We also need to account for if-condition: */
 		if (block->condition)
 			ir3_instr_depth(block->condition);
 	}

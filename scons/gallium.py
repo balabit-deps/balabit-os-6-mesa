@@ -82,11 +82,6 @@ def install_shared_library(env, sources, version = ()):
     return targets
 
 
-def createInstallMethods(env):
-    env.AddMethod(install_program, 'InstallProgram')
-    env.AddMethod(install_shared_library, 'InstallSharedLibrary')
-
-
 def msvc2013_compat(env):
     if env['gcc']:
         env.Append(CCFLAGS = [
@@ -94,8 +89,20 @@ def msvc2013_compat(env):
             '-Werror=pointer-arith',
         ])
 
-def createMSVCCompatMethods(env):
-    env.AddMethod(msvc2013_compat, 'MSVC2013Compat')
+
+def unit_test(env, test_name, program_target, args=None):
+    env.InstallProgram(program_target)
+
+    cmd = [program_target[0].abspath]
+    if args is not None:
+        cmd += args
+    cmd = ' '.join(cmd)
+
+    # http://www.scons.org/wiki/UnitTests
+    action = SCons.Action.Action(cmd, "  Running $SOURCE ...")
+    alias = env.Alias(test_name, program_target, action)
+    env.AlwaysBuild(alias)
+    env.Depends('check', alias)
 
 
 def num_jobs():
@@ -138,6 +145,30 @@ def check_cc(env, cc, expr, cpp_opt = '-E'):
     sys.stdout.write(' %s\n' % ['no', 'yes'][int(bool(result))])
     return result
 
+def check_header(env, header):
+    '''Check if the header exist'''
+
+    conf = SCons.Script.Configure(env)
+    have_header = False
+
+    if conf.CheckHeader(header):
+        have_header = True
+
+    env = conf.Finish()
+    return have_header
+
+def check_functions(env, functions):
+    '''Check if all of the functions exist'''
+
+    conf = SCons.Script.Configure(env)
+    have_functions = True
+
+    for function in functions:
+        if not conf.CheckFunc(function):
+            have_functions = False
+
+    env = conf.Finish()
+    return have_functions
 
 def check_prog(env, prog):
     """Check whether this program exists."""
@@ -164,16 +195,6 @@ def generate(env):
     # Allow override compiler and specify additional flags from environment
     if os.environ.has_key('CC'):
         env['CC'] = os.environ['CC']
-        # Update CCVERSION to match
-        pipe = SCons.Action._subproc(env, [env['CC'], '--version'],
-                                     stdin = 'devnull',
-                                     stderr = 'devnull',
-                                     stdout = subprocess.PIPE)
-        if pipe.wait() == 0:
-            line = pipe.stdout.readline()
-            match = re.search(r'[0-9]+(\.[0-9]+)+', line)
-            if match:
-                env['CCVERSION'] = match.group(0)
     if os.environ.has_key('CFLAGS'):
         env['CCFLAGS'] += SCons.Util.CLVar(os.environ['CFLAGS'])
     if os.environ.has_key('CXX'):
@@ -186,14 +207,15 @@ def generate(env):
     # Detect gcc/clang not by executable name, but through pre-defined macros
     # as autoconf does, to avoid drawing wrong conclusions when using tools
     # that overrice CC/CXX like scan-build.
-    env['gcc'] = 0
+    env['gcc_compat'] = 0
     env['clang'] = 0
     env['msvc'] = 0
     if host_platform.system() == 'Windows':
         env['msvc'] = check_cc(env, 'MSVC', 'defined(_MSC_VER)', '/E')
     if not env['msvc']:
-        env['gcc'] = check_cc(env, 'GCC', 'defined(__GNUC__) && !defined(__clang__)')
-        env['clang'] = check_cc(env, 'Clang', '__clang__')
+        env['gcc_compat'] = check_cc(env, 'GCC', 'defined(__GNUC__)')
+    env['clang'] = check_cc(env, 'Clang', '__clang__')
+    env['gcc'] = env['gcc_compat'] and not env['clang']
     env['suncc'] = env['platform'] == 'sunos' and os.path.basename(env['CC']) == 'cc'
     env['icc'] = 'icc' == os.path.basename(env['CC'])
 
@@ -206,7 +228,7 @@ def generate(env):
     platform = env['platform']
     x86 = env['machine'] == 'x86'
     ppc = env['machine'] == 'ppc'
-    gcc_compat = env['gcc'] or env['clang']
+    gcc_compat = env['gcc_compat']
     msvc = env['msvc']
     suncc = env['suncc']
     icc = env['icc']
@@ -235,16 +257,16 @@ def generate(env):
     # Backwards compatability with the debug= profile= options
     if env['build'] == 'debug':
         if not env['debug']:
-            print 'scons: warning: debug option is deprecated and will be removed eventually; use instead'
-            print
-            print ' scons build=release'
-            print
+            print('scons: warning: debug option is deprecated and will be removed eventually; use instead')
+            print('')
+            print(' scons build=release')
+            print('')
             env['build'] = 'release'
         if env['profile']:
-            print 'scons: warning: profile option is deprecated and will be removed eventually; use instead'
-            print
-            print ' scons build=profile'
-            print
+            print('scons: warning: profile option is deprecated and will be removed eventually; use instead')
+            print('')
+            print(' scons build=profile')
+            print('')
             env['build'] = 'profile'
     if False:
         # Enforce SConscripts to use the new build variable
@@ -258,7 +280,7 @@ def generate(env):
         if env['build'] == 'profile':
             env['debug'] = False
             env['profile'] = True
-        if env['build'] == 'release':
+        if env['build'] in ('release', 'opt'):
             env['debug'] = False
             env['profile'] = False
 
@@ -278,7 +300,7 @@ def generate(env):
     env['build_dir'] = build_dir
     env.SConsignFile(os.path.join(build_dir, '.sconsign'))
     if 'SCONS_CACHE_DIR' in os.environ:
-        print 'scons: Using build cache in %s.' % (os.environ['SCONS_CACHE_DIR'],)
+        print('scons: Using build cache in %s.' % (os.environ['SCONS_CACHE_DIR'],))
         env.CacheDir(os.environ['SCONS_CACHE_DIR'])
     env['CONFIGUREDIR'] = os.path.join(build_dir, 'conf')
     env['CONFIGURELOG'] = os.path.join(os.path.abspath(build_dir), 'config.log')
@@ -292,13 +314,20 @@ def generate(env):
 
     # C preprocessor options
     cppdefines = []
-    cppdefines += ['__STDC_LIMIT_MACROS', '__STDC_CONSTANT_MACROS']
+    cppdefines += [
+        '__STDC_CONSTANT_MACROS',
+        '__STDC_FORMAT_MACROS',
+        '__STDC_LIMIT_MACROS',
+        'HAVE_NO_AUTOCONF',
+    ]
     if env['build'] in ('debug', 'checked'):
         cppdefines += ['DEBUG']
     else:
         cppdefines += ['NDEBUG']
     if env['build'] == 'profile':
         cppdefines += ['PROFILE']
+    if env['build'] in ('opt', 'profile'):
+        cppdefines += ['VMX86_STATS']
     if env['platform'] in ('posix', 'linux', 'freebsd', 'darwin'):
         cppdefines += [
             '_POSIX_SOURCE',
@@ -307,8 +336,6 @@ def generate(env):
             '_BSD_SOURCE',
             '_GNU_SOURCE',
             '_DEFAULT_SOURCE',
-            'HAVE_PTHREAD',
-            'HAVE_POSIX_MEMALIGN',
         ]
         if env['platform'] == 'darwin':
             cppdefines += [
@@ -321,19 +348,13 @@ def generate(env):
                 'GLX_DIRECT_RENDERING',
                 'GLX_INDIRECT_RENDERING',
             ]
-        if env['platform'] in ('linux', 'freebsd'):
-            cppdefines += ['HAVE_ALIAS']
-        else:
-            cppdefines += ['GLX_ALIAS_UNSUPPORTED']
 
-        if env['platform'] in ('linux', 'darwin'):
+        if check_header(env, 'xlocale.h'):
             cppdefines += ['HAVE_XLOCALE_H']
 
-    if env['platform'] == 'haiku':
-        cppdefines += [
-            'HAVE_PTHREAD',
-            'HAVE_POSIX_MEMALIGN'
-        ]
+        if check_functions(env, ['strtod_l', 'strtof_l']):
+            cppdefines += ['HAVE_STRTOD_L']
+
     if platform == 'windows':
         cppdefines += [
             'WIN32',
@@ -364,29 +385,9 @@ def generate(env):
     if env['embedded']:
         cppdefines += ['PIPE_SUBSYSTEM_EMBEDDED']
     if env['texture_float']:
-        print 'warning: Floating-point textures enabled.'
-        print 'warning: Please consult docs/patents.txt with your lawyer before building Mesa.'
+        print('warning: Floating-point textures enabled.')
+        print('warning: Please consult docs/patents.txt with your lawyer before building Mesa.')
         cppdefines += ['TEXTURE_FLOAT_ENABLED']
-    if gcc_compat:
-        ccversion = env['CCVERSION']
-        cppdefines += [
-            'HAVE___BUILTIN_EXPECT',
-            'HAVE___BUILTIN_FFS',
-            'HAVE___BUILTIN_FFSLL',
-            'HAVE_FUNC_ATTRIBUTE_FLATTEN',
-            'HAVE_FUNC_ATTRIBUTE_UNUSED',
-            # GCC 3.0
-            'HAVE_FUNC_ATTRIBUTE_FORMAT',
-            'HAVE_FUNC_ATTRIBUTE_PACKED',
-            # GCC 3.4
-            'HAVE___BUILTIN_CTZ',
-            'HAVE___BUILTIN_POPCOUNT',
-            'HAVE___BUILTIN_POPCOUNTLL',
-            'HAVE___BUILTIN_CLZ',
-            'HAVE___BUILTIN_CLZLL',
-        ]
-        if distutils.version.LooseVersion(ccversion) >= distutils.version.LooseVersion('4.5'):
-            cppdefines += ['HAVE___BUILTIN_UNREACHABLE']
     env.Append(CPPDEFINES = cppdefines)
 
     # C compiler options
@@ -394,12 +395,7 @@ def generate(env):
     cxxflags = [] # C++
     ccflags = [] # C & C++
     if gcc_compat:
-        ccversion = env['CCVERSION']
         if env['build'] == 'debug':
-            ccflags += ['-O0']
-        elif env['gcc'] and ccversion.startswith('4.2.'):
-            # gcc 4.2.x optimizer is broken
-            print "warning: gcc 4.2.x optimizer is broken -- disabling optimizations"
             ccflags += ['-O0']
         else:
             ccflags += ['-O3']
@@ -410,7 +406,7 @@ def generate(env):
         # Work around aliasing bugs - developers should comment this out
         ccflags += ['-fno-strict-aliasing']
         ccflags += ['-g']
-        if env['build'] in ('checked', 'profile'):
+        if env['build'] in ('checked', 'profile') or env['asan']:
             # See http://code.google.com/p/jrfonseca/wiki/Gprof2Dot#Which_options_should_I_pass_to_gcc_when_compiling_for_profiling?
             ccflags += [
                 '-fno-omit-frame-pointer',
@@ -480,14 +476,14 @@ def generate(env):
             ccflags += [
                 '/O2', # optimize for speed
             ]
-        if env['build'] == 'release':
-            ccflags += [
-                '/GL', # enable whole program optimization
-            ]
+        if env['build'] in ('release', 'opt'):
+            if not env['clang']:
+                ccflags += [
+                    '/GL', # enable whole program optimization
+                ]
         else:
             ccflags += [
                 '/Oy-', # disable frame pointer omission
-                '/GL-', # disable whole program optimization
             ]
         ccflags += [
             '/W3', # warning level
@@ -501,6 +497,10 @@ def generate(env):
             '/wd4800', # forcing value to bool 'true' or 'false' (performance warning)
             '/wd4996', # disable deprecated POSIX name warnings
         ]
+        if env['clang']:
+            ccflags += [
+                '-Wno-microsoft-enum-value', # enumerator value is not representable in underlying type 'int'
+            ]
         if env['machine'] == 'x86':
             ccflags += [
                 '/arch:SSE2', # use the SSE2 instructions (default since MSVC 2012)
@@ -540,6 +540,16 @@ def generate(env):
             # scan-build will produce more comprehensive output
             env.Append(CCFLAGS = ['--analyze'])
 
+    # https://github.com/google/sanitizers/wiki/AddressSanitizer
+    if env['asan']:
+        if gcc_compat:
+            env.Append(CCFLAGS = [
+                '-fsanitize=address',
+            ])
+            env.Append(LINKFLAGS = [
+                '-fsanitize=address',
+            ])
+
     # Assembler options
     if gcc_compat:
         if env['machine'] == 'x86':
@@ -577,7 +587,7 @@ def generate(env):
             shlinkflags += ['-Wl,--enable-stdcall-fixup']
             #shlinkflags += ['-Wl,--kill-at']
     if msvc:
-        if env['build'] == 'release':
+        if env['build'] in ('release', 'opt') and not env['clang']:
             # enable Link-time Code Generation
             linkflags += ['/LTCG']
             env.Append(ARFLAGS = ['/LTCG'])
@@ -657,14 +667,15 @@ def generate(env):
     
     # Custom builders and methods
     env.Tool('custom')
-    createInstallMethods(env)
-    createMSVCCompatMethods(env)
+    env.AddMethod(install_program, 'InstallProgram')
+    env.AddMethod(install_shared_library, 'InstallSharedLibrary')
+    env.AddMethod(msvc2013_compat, 'MSVC2013Compat')
+    env.AddMethod(unit_test, 'UnitTest')
 
-    env.PkgCheckModules('X11', ['x11', 'xext', 'xdamage', 'xfixes', 'glproto >= 1.4.13'])
+    env.PkgCheckModules('X11', ['x11', 'xext', 'xdamage >= 1.1', 'xfixes', 'glproto >= 1.4.13', 'dri2proto >= 2.8'])
     env.PkgCheckModules('XCB', ['x11-xcb', 'xcb-glx >= 1.8.1', 'xcb-dri2 >= 1.8'])
     env.PkgCheckModules('XF86VIDMODE', ['xxf86vm'])
-    env.PkgCheckModules('DRM', ['libdrm >= 2.4.38'])
-    env.PkgCheckModules('UDEV', ['libudev >= 151'])
+    env.PkgCheckModules('DRM', ['libdrm >= 2.4.75'])
 
     if env['x11']:
         env.Append(CPPPATH = env['X11_CPPPATH'])

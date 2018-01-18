@@ -31,7 +31,6 @@
  * shared variables.
  */
 
-#pragma once
 #ifndef LOWER_BUFFER_ACCESS_H
 #define LOWER_BUFFER_ACCESS_H
 
@@ -54,11 +53,11 @@ public:
 
    bool is_dereferenced_thing_row_major(const ir_rvalue *deref);
 
-   void setup_buffer_access(void *mem_ctx, ir_variable *var, ir_rvalue *deref,
+   void setup_buffer_access(void *mem_ctx, ir_rvalue *deref,
                             ir_rvalue **offset, unsigned *const_offset,
                             bool *row_major, int *matrix_columns,
                             const glsl_struct_field **struct_field,
-                            unsigned packing);
+                            enum glsl_interface_packing packing);
 };
 
 } /* namespace lower_buffer_access */

@@ -51,7 +51,7 @@ ir_rvalue_base_visitor::rvalue_visit(ir_texture *ir)
 {
    handle_rvalue(&ir->coordinate);
    handle_rvalue(&ir->projector);
-   handle_rvalue(&ir->shadow_comparitor);
+   handle_rvalue(&ir->shadow_comparator);
    handle_rvalue(&ir->offset);
 
    switch (ir->op) {
@@ -146,7 +146,7 @@ ir_rvalue_base_visitor::rvalue_visit(ir_discard *ir)
 ir_visitor_status
 ir_rvalue_base_visitor::rvalue_visit(ir_return *ir)
 {
-   handle_rvalue(&ir->value);;
+   handle_rvalue(&ir->value);
    return visit_continue;
 }
 

@@ -22,15 +22,12 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_SYMBOL_TABLE
 #define GLSL_SYMBOL_TABLE
 
 #include <new>
 
-extern "C" {
 #include "program/symbol_table.h"
-}
 #include "ir.h"
 
 class symbol_table_entry;
@@ -100,11 +97,17 @@ struct glsl_symbol_table {
     */
    void disable_variable(const char *name);
 
+   /**
+    * Replaces the variable in the entry by the new variable.
+    */
+   void replace_variable(const char *name, ir_variable *v);
+
 private:
    symbol_table_entry *get_entry(const char *name);
 
    struct _mesa_symbol_table *table;
    void *mem_ctx;
+   void *linalloc;
 };
 
 #endif /* GLSL_SYMBOL_TABLE */

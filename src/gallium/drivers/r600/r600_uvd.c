@@ -115,7 +115,7 @@ struct pipe_video_buffer *r600_video_buffer_create(struct pipe_context *pipe,
 		surfaces[i] = &resources[i]->surface;
 	}
 
-	rvid_join_surfaces(ctx->b.ws, templ.bind, pbs, surfaces);
+	rvid_join_surfaces(&ctx->b, pbs, surfaces);
 
 	for (i = 0; i < VL_NUM_COMPONENTS; ++i) {
 		if (!resources[i])
@@ -131,7 +131,7 @@ struct pipe_video_buffer *r600_video_buffer_create(struct pipe_context *pipe,
 
 error:
 	for (i = 0; i < VL_NUM_COMPONENTS; ++i)
-		pipe_resource_reference((struct pipe_resource **)&resources[i], NULL);
+		r600_texture_reference(&resources[i], NULL);
 
 	return NULL;
 }
@@ -162,7 +162,7 @@ static struct pb_buffer* r600_uvd_set_dtb(struct ruvd_msg *msg, struct vl_video_
 	msg->body.decode.dt_field_mode = buf->base.interlaced;
 	msg->body.decode.dt_surf_tile_config |= RUVD_NUM_BANKS(eg_num_banks(rscreen->b.info.r600_num_banks));
 
-	ruvd_set_dt_surfaces(msg, &luma->surface, &chroma->surface);
+	ruvd_set_dt_surfaces(msg, &luma->surface, &chroma->surface, RUVD_SURFACE_TYPE_LEGACY);
 
 	return luma->resource.buf;
 }

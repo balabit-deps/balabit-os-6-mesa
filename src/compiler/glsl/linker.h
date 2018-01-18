@@ -22,22 +22,19 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_LINKER_H
 #define GLSL_LINKER_H
 
 extern bool
-link_function_calls(gl_shader_program *prog, gl_shader *main,
-		    gl_shader **shader_list, unsigned num_shaders);
+link_function_calls(gl_shader_program *prog, gl_linked_shader *main,
+                    gl_shader **shader_list, unsigned num_shaders);
 
 extern void
 link_invalidate_variable_locations(exec_list *ir);
 
 extern void
 link_assign_uniform_locations(struct gl_shader_program *prog,
-                              unsigned int boolean_true,
-                              unsigned int num_explicit_uniform_locs,
-                              unsigned int max_uniform_locs);
+                              struct gl_context *ctx);
 
 extern void
 link_set_uniform_initializers(struct gl_shader_program *prog,
@@ -45,21 +42,19 @@ link_set_uniform_initializers(struct gl_shader_program *prog,
 
 extern int
 link_cross_validate_uniform_block(void *mem_ctx,
-				  struct gl_uniform_block **linked_blocks,
-				  unsigned int *num_linked_blocks,
-				  struct gl_uniform_block *new_block);
+                                  struct gl_uniform_block **linked_blocks,
+                                  unsigned int *num_linked_blocks,
+                                  struct gl_uniform_block *new_block);
 
-extern bool
-link_uniform_blocks_are_compatible(const gl_uniform_block *a,
-				   const gl_uniform_block *b);
-
-extern unsigned
+extern void
 link_uniform_blocks(void *mem_ctx,
                     struct gl_context *ctx,
                     struct gl_shader_program *prog,
-                    struct gl_shader **shader_list,
-                    unsigned num_shaders,
-                    struct gl_uniform_block **blocks_ret);
+                    struct gl_linked_shader *shader,
+                    struct gl_uniform_block **ubo_blocks,
+                    unsigned *num_ubo_blocks,
+                    struct gl_uniform_block **ssbo_blocks,
+                    unsigned *num_ssbo_blocks);
 
 bool
 validate_intrastage_arrays(struct gl_shader_program *prog,
@@ -73,12 +68,12 @@ validate_intrastage_interface_blocks(struct gl_shader_program *prog,
 
 void
 validate_interstage_inout_blocks(struct gl_shader_program *prog,
-                                 const gl_shader *producer,
-                                 const gl_shader *consumer);
+                                 const gl_linked_shader *producer,
+                                 const gl_linked_shader *consumer);
 
 void
 validate_interstage_uniform_blocks(struct gl_shader_program *prog,
-                                   gl_shader **stages, int num_stages);
+                                   gl_linked_shader **stages);
 
 extern void
 link_assign_atomic_counter_resources(struct gl_context *ctx,
@@ -87,6 +82,15 @@ link_assign_atomic_counter_resources(struct gl_context *ctx,
 extern void
 link_check_atomic_counter_resources(struct gl_context *ctx,
                                     struct gl_shader_program *prog);
+
+
+extern struct gl_linked_shader *
+link_intrastage_shaders(void *mem_ctx,
+                        struct gl_context *ctx,
+                        struct gl_shader_program *prog,
+                        struct gl_shader **shader_list,
+                        unsigned num_shaders,
+                        bool allow_missing_main);
 
 /**
  * Class for processing all of the leaf fields of a variable that corresponds
@@ -148,23 +152,11 @@ protected:
     * \param last_field   Set if \c name is the last field of the structure
     *                     containing it.  This will always be false for items
     *                     not contained in a structure or interface block.
-    *
-    * The default implementation just calls the other \c visit_field method.
     */
    virtual void visit_field(const glsl_type *type, const char *name,
                             bool row_major, const glsl_type *record_type,
-                            const unsigned packing,
-                            bool last_field);
-
-   /**
-    * Method invoked for each leaf of the variable
-    *
-    * \param type  Type of the field.
-    * \param name  Fully qualified name of the field.
-    * \param row_major  For a matrix type, is it stored row-major.
-    */
-   virtual void visit_field(const glsl_type *type, const char *name,
-                            bool row_major) = 0;
+                            const enum glsl_interface_packing packing,
+                            bool last_field) = 0;
 
    /**
     * Visit a record before visiting its fields
@@ -177,10 +169,12 @@ protected:
    virtual void visit_field(const glsl_struct_field *field);
 
    virtual void enter_record(const glsl_type *type, const char *name,
-                             bool row_major, const unsigned packing);
+                             bool row_major, const enum glsl_interface_packing packing);
 
    virtual void leave_record(const glsl_type *type, const char *name,
-                             bool row_major, const unsigned packing);
+                             bool row_major, const enum glsl_interface_packing packing);
+
+   virtual void set_buffer_offset(unsigned offset);
 
    virtual void set_record_array_count(unsigned record_array_count);
 
@@ -194,8 +188,9 @@ private:
     */
    void recursion(const glsl_type *t, char **name, size_t name_length,
                   bool row_major, const glsl_type *record_type,
-                  const unsigned packing,
-                  bool last_field, unsigned record_array_count);
+                  const enum glsl_interface_packing packing,
+                  bool last_field, unsigned record_array_count,
+                  const glsl_struct_field *named_ifc_member);
 };
 
 void

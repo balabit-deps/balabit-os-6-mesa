@@ -40,6 +40,7 @@
 #  include <time.h> /* timeval */
 #  include <sys/time.h> /* timeval */
 #  include <sched.h> /* sched_yield */
+#  include <errno.h>
 #elif defined(PIPE_SUBSYSTEM_WINDOWS_USER)
 #  include <windows.h>
 #else
@@ -68,10 +69,17 @@ os_time_get_nano(void)
 
    static LARGE_INTEGER frequency;
    LARGE_INTEGER counter;
+   int64_t secs, nanosecs;
    if(!frequency.QuadPart)
       QueryPerformanceFrequency(&frequency);
    QueryPerformanceCounter(&counter);
-   return counter.QuadPart*INT64_C(1000000000)/frequency.QuadPart;
+   /* Compute seconds and nanoseconds parts separately to
+    * reduce severity of precision loss.
+    */
+   secs = counter.QuadPart / frequency.QuadPart;
+   nanosecs = (counter.QuadPart % frequency.QuadPart) * INT64_C(1000000000)
+      / frequency.QuadPart;
+   return secs*INT64_C(1000000000) + nanosecs;
 
 #else
 
@@ -81,19 +89,30 @@ os_time_get_nano(void)
 }
 
 
-#if defined(PIPE_SUBSYSTEM_WINDOWS_USER)
 
 void
 os_time_sleep(int64_t usecs)
 {
+#if defined(PIPE_OS_LINUX)
+   struct timespec time;
+   time.tv_sec = usecs / 1000000;
+   time.tv_nsec = (usecs % 1000000) * 1000;
+   while (clock_nanosleep(CLOCK_MONOTONIC, 0, &time, &time) == EINTR);
+
+#elif defined(PIPE_OS_UNIX)
+   usleep(usecs);
+
+#elif defined(PIPE_SUBSYSTEM_WINDOWS_USER)
    DWORD dwMilliseconds = (DWORD) ((usecs + 999) / 1000);
    /* Avoid Sleep(O) as that would cause to sleep for an undetermined duration */
    if (dwMilliseconds) {
       Sleep(dwMilliseconds);
    }
+#else
+#  error Unsupported OS
+#endif
 }
 
-#endif
 
 
 int64_t

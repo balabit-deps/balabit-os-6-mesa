@@ -1,31 +1,31 @@
 Index: mesa/configure.ac
 ===================================================================
---- mesa.orig/configure.ac
-+++ mesa/configure.ac
-@@ -1824,7 +1824,9 @@ for plat in $egl_platforms; do
- 		test "x$have_libdrm" != xyes &&
- 			AC_MSG_ERROR([EGL platform surfaceless requires libdrm >= $LIBDRM_REQUIRED])
- 		;;
+--- mesa.orig/configure.ac	2017-08-10 16:37:31.970030645 +1000
++++ mesa/configure.ac	2017-08-10 17:18:19.000000000 +1000
+@@ -1723,7 +1723,9 @@
+         PKG_CHECK_MODULES([ANDROID], [cutils hardware sync])
+         DEFINES="$DEFINES -DHAVE_ANDROID_PLATFORM"
+         ;;
 -
-+        mir)
-+                PKG_CHECK_MODULES([MIR], [mirclient mir-client-platform-mesa])
-+                ;;
- 	*)
- 		AC_MSG_ERROR([EGL platform '$plat' does not exist])
- 		;;
-@@ -1850,6 +1852,7 @@ AM_CONDITIONAL(HAVE_EGL_PLATFORM_WAYLAND
- AM_CONDITIONAL(HAVE_EGL_PLATFORM_DRM, echo "$egl_platforms" | grep -q 'drm')
- AM_CONDITIONAL(HAVE_EGL_PLATFORM_SURFACELESS, echo "$egl_platforms" | grep -q 'surfaceless')
- AM_CONDITIONAL(HAVE_EGL_PLATFORM_NULL, echo "$egl_platforms" | grep -q 'null')
-+AM_CONDITIONAL(HAVE_EGL_PLATFORM_MIR, echo "$egl_platforms" | grep -q 'mir')
++    mir)
++        PKG_CHECK_MODULES([MIR], [mirclient mir-client-platform-mesa])
++        ;;
+     *)
+         AC_MSG_ERROR([platform '$plat' does not exist])
+         ;;
+@@ -1754,6 +1756,7 @@
+ AM_CONDITIONAL(HAVE_PLATFORM_DRM, echo "$platforms" | grep -q 'drm')
+ AM_CONDITIONAL(HAVE_PLATFORM_SURFACELESS, echo "$platforms" | grep -q 'surfaceless')
+ AM_CONDITIONAL(HAVE_PLATFORM_ANDROID, echo "$platforms" | grep -q 'android')
++AM_CONDITIONAL(HAVE_PLATFORM_MIR, echo "$platforms" | grep -q 'mir')
  
- AM_CONDITIONAL(HAVE_EGL_DRIVER_DRI2, test "x$HAVE_EGL_DRIVER_DRI2" != "x")
- 
+ dnl
+ dnl More DRI setup
 Index: mesa/include/EGL/eglplatform.h
 ===================================================================
---- mesa.orig/include/EGL/eglplatform.h
-+++ mesa/include/EGL/eglplatform.h
-@@ -105,6 +105,13 @@ typedef struct ANativeWindow*
+--- mesa.orig/include/EGL/eglplatform.h	2017-08-10 16:37:31.970030645 +1000
++++ mesa/include/EGL/eglplatform.h	2017-08-10 17:18:19.000000000 +1000
+@@ -105,6 +105,13 @@
  typedef struct egl_native_pixmap_t*     EGLNativePixmapType;
  typedef void*                           EGLNativeDisplayType;
  
@@ -41,9 +41,9 @@ Index: mesa/include/EGL/eglplatform.h
  #if defined(MESA_EGL_NO_X11_HEADERS)
 Index: mesa/include/GL/internal/dri_interface.h
 ===================================================================
---- mesa.orig/include/GL/internal/dri_interface.h
-+++ mesa/include/GL/internal/dri_interface.h
-@@ -895,10 +895,12 @@ struct __DRIbufferRec {
+--- mesa.orig/include/GL/internal/dri_interface.h	2017-08-10 16:37:31.970030645 +1000
++++ mesa/include/GL/internal/dri_interface.h	2017-08-10 16:37:31.966030819 +1000
+@@ -964,10 +964,12 @@
      unsigned int pitch;
      unsigned int cpp;
      unsigned int flags;
@@ -59,50 +59,49 @@ Index: mesa/include/GL/internal/dri_interface.h
  
 Index: mesa/src/egl/drivers/dri2/egl_dri2.c
 ===================================================================
---- mesa.orig/src/egl/drivers/dri2/egl_dri2.c
-+++ mesa/src/egl/drivers/dri2/egl_dri2.c
-@@ -783,6 +783,12 @@ dri2_initialize(_EGLDriver *drv, _EGLDis
-          return EGL_TRUE;
-       return dri2_initialize_wayland(drv, disp);
+--- mesa.orig/src/egl/drivers/dri2/egl_dri2.c	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/egl/drivers/dri2/egl_dri2.c	2017-08-10 17:18:19.000000000 +1000
+@@ -858,6 +858,11 @@
+       ret = dri2_initialize_wayland(drv, disp);
+       break;
  #endif
 +#ifdef HAVE_MIR_PLATFORM
 +   case _EGL_PLATFORM_MIR:
-+      if (disp->Options.TestOnly)
-+         return EGL_TRUE;
-+      return dri2_initialize_mir(drv, disp);
++      ret = dri2_initialize_mir(drv, disp);
++      break;
 +#endif
  #ifdef HAVE_ANDROID_PLATFORM
     case _EGL_PLATFORM_ANDROID:
-       if (disp->Options.TestOnly)
-@@ -832,6 +838,13 @@ dri2_terminate(_EGLDriver *drv, _EGLDisp
+       ret = dri2_initialize_android(drv, disp);
+@@ -936,6 +941,13 @@
        }
        break;
  #endif
 +#ifdef HAVE_MIR_PLATFORM
 +   case _EGL_PLATFORM_MIR:
 +      if (dri2_dpy->own_device) {
-+         gbm_device_destroy(&dri2_dpy->gbm_dri->base.base);
++         gbm_device_destroy(&dri2_dpy->gbm_dri->base);
 +      }
 +      break;
 +#endif
  #ifdef HAVE_WAYLAND_PLATFORM
     case _EGL_PLATFORM_WAYLAND:
        if (dri2_dpy->wl_drm)
-@@ -853,7 +866,8 @@ dri2_terminate(_EGLDriver *drv, _EGLDisp
+@@ -963,7 +975,8 @@
      * the ones from the gbm device. As such the gbm itself is responsible
      * for the cleanup.
      */
--   if (disp->Platform != _EGL_PLATFORM_DRM) {
+-   if (disp->Platform != _EGL_PLATFORM_DRM && dri2_dpy->driver_configs) {
 +   if (disp->Platform != _EGL_PLATFORM_DRM &&
-+       disp->Platform != _EGL_PLATFORM_MIR) {
-       for (i = 0; dri2_dpy->driver_configs[i]; i++)
++       disp->Platform != _EGL_PLATFORM_MIR && dri2_dpy->driver_configs) {
+       for (unsigned i = 0; dri2_dpy->driver_configs[i]; i++)
           free((__DRIconfig *) dri2_dpy->driver_configs[i]);
        free(dri2_dpy->driver_configs);
 Index: mesa/src/egl/drivers/dri2/egl_dri2.h
 ===================================================================
---- mesa.orig/src/egl/drivers/dri2/egl_dri2.h
-+++ mesa/src/egl/drivers/dri2/egl_dri2.h
-@@ -70,6 +70,10 @@
+--- mesa.orig/src/egl/drivers/dri2/egl_dri2.h	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/egl/drivers/dri2/egl_dri2.h	2017-08-10 17:18:19.000000000 +1000
+@@ -65,6 +65,10 @@
  
  #endif /* HAVE_ANDROID_PLATFORM */
  
@@ -113,18 +112,17 @@ Index: mesa/src/egl/drivers/dri2/egl_dri2.h
  #include "eglconfig.h"
  #include "eglcontext.h"
  #include "egldisplay.h"
-@@ -216,6 +220,10 @@ struct dri2_egl_display
- #endif
+@@ -234,6 +238,9 @@
  
-    int			     is_different_gpu;
-+
+    bool                      is_render_node;
+    bool                      is_different_gpu;
 +#ifdef HAVE_MIR_PLATFORM
-+  MirMesaEGLNativeDisplay *mir_disp;
++   MirMesaEGLNativeDisplay *mir_disp;
 +#endif
  };
  
  struct dri2_egl_context
-@@ -262,7 +270,7 @@ struct dri2_egl_surface
+@@ -283,7 +290,7 @@
     struct gbm_dri_surface *gbm_surf;
  #endif
  
@@ -133,7 +131,7 @@ Index: mesa/src/egl/drivers/dri2/egl_dri2.h
     __DRIbuffer           *dri_buffers[__DRI_BUFFER_COUNT];
     struct {
  #ifdef HAVE_WAYLAND_PLATFORM
-@@ -274,9 +282,13 @@ struct dri2_egl_surface
+@@ -295,9 +302,13 @@
        void *data;
        int data_size;
  #endif
@@ -145,12 +143,12 @@ Index: mesa/src/egl/drivers/dri2/egl_dri2.h
 +      int                 fd;
 +      int                 buffer_age;
 +#endif
-       int                 locked;
+       bool                locked;
        int                 age;
     } color_buffers[4], *back, *current;
-@@ -289,6 +301,10 @@ struct dri2_egl_surface
-    /* EGL-owned buffers */
-    __DRIbuffer           *local_buffers[__DRI_BUFFER_COUNT];
+@@ -326,6 +337,10 @@
+       __DRIimage           *front;
+       unsigned int         visual;
  #endif
 +
 +#ifdef HAVE_MIR_PLATFORM
@@ -158,20 +156,22 @@ Index: mesa/src/egl/drivers/dri2/egl_dri2.h
 +#endif
  };
  
- 
-@@ -379,4 +395,7 @@ const __DRIconfig *
- dri2_get_dri_config(struct dri2_egl_config *conf, EGLint surface_type,
-                     EGLenum colorspace);
+ struct dri2_egl_config
+@@ -417,6 +432,9 @@
+ EGLBoolean
+ dri2_initialize_surfaceless(_EGLDriver *drv, _EGLDisplay *disp);
  
 +EGLBoolean
 +dri2_initialize_mir(_EGLDriver *drv, _EGLDisplay *disp);
 +
- #endif /* EGL_DRI2_INCLUDED */
+ void
+ dri2_flush_drawable_for_swapbuffers(_EGLDisplay *disp, _EGLSurface *draw);
+ 
 Index: mesa/src/egl/drivers/dri2/platform_mir.c
 ===================================================================
---- /dev/null
-+++ mesa/src/egl/drivers/dri2/platform_mir.c
-@@ -0,0 +1,637 @@
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ mesa/src/egl/drivers/dri2/platform_mir.c	2017-08-10 17:20:55.133969688 +1000
+@@ -0,0 +1,633 @@
 +/*
 + * Copyright © 2012 Canonical, Inc
 + *
@@ -223,10 +223,9 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      dri2_egl_display(dri2_surf->base.Resource.Display);
 +   int i;
 +
-+   dri2_surf->buffer_count = 0;
 +   for (i = 0; i < 2*count; i+=2) {
 +      assert(attachments[i] < __DRI_BUFFER_COUNT);
-+      assert(dri2_surf->buffer_count < 5);
++      assert((i/2) < ARRAY_SIZE(dri2_surf->buffers));
 +
 +      if (dri2_surf->dri_buffers[attachments[i]] == NULL) {
 +         /* Our frame callback must keep these buffers valid */
@@ -238,22 +237,22 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +                  attachments[i], attachments[i+1],
 +                  dri2_surf->base.Width, dri2_surf->base.Height);
 +
-+         if (!dri2_surf->dri_buffers[attachments[i]])
-+            continue;
++         if (!dri2_surf->dri_buffers[attachments[i]]) {
++            _eglError(EGL_BAD_ALLOC, "failed to allocate auxiliary buffer");
++	    return NULL;
++	 }
 +      }
 +
-+      memcpy(&dri2_surf->buffers[dri2_surf->buffer_count],
++      memcpy(&dri2_surf->buffers[i/2],
 +             dri2_surf->dri_buffers[attachments[i]],
 +             sizeof(__DRIbuffer));
-+
-+      dri2_surf->buffer_count++;
 +   }
 +
 +   assert(dri2_surf->base.Type == EGL_PIXMAP_BIT ||
 +          dri2_surf->dri_buffers[__DRI_BUFFER_BACK_LEFT]);
 +
-+   *out_count = dri2_surf->buffer_count;
-+   if (dri2_surf->buffer_count == 0)
++   *out_count = i/2;
++   if (i == 0)
 +	   return NULL;
 +
 +   *width = dri2_surf->base.Width;
@@ -371,7 +370,7 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      gbm_bo_destroy(dri2_surf->color_buffers[slot].bo);
 +
 +   dri2_surf->color_buffers[slot].bo = create_gbm_bo_from_buffer(
-+      &dri2_dpy->gbm_dri->base.base,
++      &dri2_dpy->gbm_dri->base,
 +      buffer_package);
 +
 +   dri2_surf->color_buffers[slot].fd = buffer_package->fd[0];
@@ -498,7 +497,7 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +   struct dri2_egl_config *dri2_conf = dri2_egl_config(conf);
 +   struct dri2_egl_surface *dri2_surf;
 +   const __DRIconfig *config;
-+   MirSurfaceParameters surf_params;
++   MirWindowParameters win_params;
 +
 +   (void) drv;
 +
@@ -512,11 +511,11 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      goto cleanup_surf;
 +
 +   dri2_surf->mir_surf = window;
-+   if (!dri2_surf->mir_surf->surface_get_parameters(dri2_surf->mir_surf, &surf_params))
++   if (!dri2_surf->mir_surf->surface_get_parameters(dri2_surf->mir_surf, &win_params))
 +      goto cleanup_surf;
 +
-+   dri2_surf->base.Width = surf_params.width;
-+   dri2_surf->base.Height = surf_params.height;
++   dri2_surf->base.Width = win_params.width;
++   dri2_surf->base.Height = win_params.height;
 +
 +   dri2_surf->dri_buffers[__DRI_BUFFER_FRONT_LEFT] =
 +      calloc(sizeof(*dri2_surf->dri_buffers[0]), 1);
@@ -540,7 +539,7 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      struct gbm_dri_surface *surf = malloc(sizeof *surf);
 +
 +      dri2_surf->gbm_surf = surf;
-+      surf->base.gbm = &dri2_dpy->gbm_dri->base.base;
++      surf->base.gbm = &dri2_dpy->gbm_dri->base;
 +      surf->base.width = dri2_surf->base.Width;
 +      surf->base.height = dri2_surf->base.Height;
 +      surf->base.format = GBM_FORMAT_ARGB8888;
@@ -666,11 +665,7 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      return NULL;
 +   }
 +
-+   if (!_eglInitImage(&dri2_img->base, disp)) {
-+      free(dri2_img);
-+      return NULL;
-+   }
-+
++   _eglInitImage(&dri2_img->base, disp);
 +
 +   dri2_img->dri_image = dri2_dpy->image->dupImage(dri_bo->image, dri2_img);
 +   if (dri2_img->dri_image == NULL) {
@@ -750,7 +745,6 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +   dri2_dpy->mir_disp = disp->PlatformDisplay;
 +   dri2_dpy->mir_disp->display_get_platform(dri2_dpy->mir_disp, &platform);
 +   dri2_dpy->fd = platform.fd[0];
-+   dri2_dpy->device_name = loader_get_device_name_for_fd(dri2_dpy->fd);
 +
 +   /*
 +    * At the moment, a pointer to gbm_device is the first and only
@@ -771,7 +765,7 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      struct gbm_dri_device *gbm_dri = gbm_dri_device(gbm);
 +
 +      dri2_dpy->gbm_dri = gbm_dri;
-+      dri2_dpy->driver_name = strdup(gbm_dri->base.driver_name);
++      dri2_dpy->driver_name = strdup(gbm_dri->driver_name);
 +      dri2_dpy->dri_screen = gbm_dri->screen;
 +      dri2_dpy->core = gbm_dri->core;
 +      dri2_dpy->dri2 = gbm_dri->dri2;
@@ -787,6 +781,8 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +      gbm_dri->get_buffers_with_format = dri2_get_buffers_with_format;
 +      gbm_dri->image_get_buffers = dri2_image_get_buffers;
 +
++      if (!dri2_setup_extensions(disp))
++         goto cleanup_dpy;
 +      dri2_setup_screen(disp);
 +   }
 +
@@ -811,9 +807,9 @@ Index: mesa/src/egl/drivers/dri2/platform_mir.c
 +}
 Index: mesa/src/egl/main/egldisplay.c
 ===================================================================
---- mesa.orig/src/egl/main/egldisplay.c
-+++ mesa/src/egl/main/egldisplay.c
-@@ -56,7 +56,10 @@
+--- mesa.orig/src/egl/main/egldisplay.c	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/egl/main/egldisplay.c	2017-08-10 17:18:19.000000000 +1000
+@@ -55,7 +55,10 @@
  #ifdef HAVE_DRM_PLATFORM
  #include <gbm.h>
  #endif
@@ -824,8 +820,8 @@ Index: mesa/src/egl/main/egldisplay.c
 +#endif
  
  /**
-  * Map --with-egl-platforms names to platform types.
-@@ -71,6 +74,7 @@ static const struct {
+  * Map --with-platforms names to platform types.
+@@ -70,6 +73,7 @@
     { _EGL_PLATFORM_ANDROID, "android" },
     { _EGL_PLATFORM_HAIKU, "haiku" },
     { _EGL_PLATFORM_SURFACELESS, "surfaceless" },
@@ -833,8 +829,8 @@ Index: mesa/src/egl/main/egldisplay.c
  };
  
  
-@@ -130,6 +134,47 @@ _eglPointerIsDereferencable(void *p)
- #endif
+@@ -100,6 +104,47 @@
+    return plat;
  }
  
 +#ifdef HAVE_MIR_PLATFORM
@@ -881,7 +877,7 @@ Index: mesa/src/egl/main/egldisplay.c
  
  /**
   * Try detecting native platform with the help of native display characteristcs.
-@@ -140,6 +185,11 @@ _eglNativePlatformDetectNativeDisplay(vo
+@@ -110,6 +155,11 @@
     if (nativeDisplay == EGL_DEFAULT_DISPLAY)
        return _EGL_INVALID_PLATFORM;
  
@@ -893,20 +889,27 @@ Index: mesa/src/egl/main/egldisplay.c
     if (_eglPointerIsDereferencable(nativeDisplay)) {
        void *first_pointer = *(void **) nativeDisplay;
  
-@@ -178,7 +228,7 @@ _eglNativePlatformDetectNativeDisplay(vo
+@@ -141,14 +191,13 @@
+    return _EGL_INVALID_PLATFORM;
+ }
+ 
+-
+ /**
+  * Return the native platform.  It is the platform of the EGL native types.
+  */
  _EGLPlatformType
  _eglGetNativePlatform(void *nativeDisplay)
  {
 -   static _EGLPlatformType native_platform = _EGL_INVALID_PLATFORM;
 +   _EGLPlatformType native_platform = _EGL_INVALID_PLATFORM;
-    char *detection_method = NULL;
+    _EGLPlatformType detected_platform = native_platform;
  
-    if (native_platform == _EGL_INVALID_PLATFORM) {
+    if (detected_platform == _EGL_INVALID_PLATFORM) {
 Index: mesa/src/egl/main/egldisplay.h
 ===================================================================
---- mesa.orig/src/egl/main/egldisplay.h
-+++ mesa/src/egl/main/egldisplay.h
-@@ -50,6 +50,7 @@ enum _egl_platform_type {
+--- mesa.orig/src/egl/main/egldisplay.h	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/egl/main/egldisplay.h	2017-08-10 17:18:19.000000000 +1000
+@@ -50,6 +50,7 @@
     _EGL_PLATFORM_ANDROID,
     _EGL_PLATFORM_HAIKU,
     _EGL_PLATFORM_SURFACELESS,
@@ -916,14 +919,15 @@ Index: mesa/src/egl/main/egldisplay.h
     _EGL_INVALID_PLATFORM = -1
 Index: mesa/src/gallium/state_trackers/dri/dri2.c
 ===================================================================
---- mesa.orig/src/gallium/state_trackers/dri/dri2.c
-+++ mesa/src/gallium/state_trackers/dri/dri2.c
-@@ -531,12 +531,20 @@ dri2_allocate_textures(struct dri_contex
+--- mesa.orig/src/gallium/state_trackers/dri/dri2.c	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/gallium/state_trackers/dri/dri2.c	2017-08-10 16:37:31.970030645 +1000
+@@ -707,13 +707,21 @@
           templ.height0 = dri_drawable->h;
           templ.format = format;
           templ.bind = bind;
 -         whandle.handle = buf->name;
           whandle.stride = buf->pitch;
+          whandle.offset = 0;
 -         if (screen->can_share_buffer)
 -            whandle.type = DRM_API_HANDLE_TYPE_SHARED;
 -         else
@@ -942,12 +946,12 @@ Index: mesa/src/gallium/state_trackers/dri/dri2.c
 +
           drawable->textures[statt] =
              screen->base.screen->resource_from_handle(screen->base.screen,
-                   &templ, &whandle);
+                   &templ, &whandle,
 Index: mesa/src/gbm/backends/dri/gbm_dri.c
 ===================================================================
---- mesa.orig/src/gbm/backends/dri/gbm_dri.c
-+++ mesa/src/gbm/backends/dri/gbm_dri.c
-@@ -202,7 +202,7 @@ static const __DRIimageLookupExtension i
+--- mesa.orig/src/gbm/backends/dri/gbm_dri.c	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/gbm/backends/dri/gbm_dri.c	2017-08-10 16:37:31.970030645 +1000
+@@ -214,7 +214,7 @@
  };
  
  static const __DRIdri2LoaderExtension dri2_loader_extension = {
@@ -956,117 +960,20 @@ Index: mesa/src/gbm/backends/dri/gbm_dri.c
  
     .getBuffers              = dri_get_buffers,
     .flushFrontBuffer        = dri_flush_front_buffer,
-@@ -536,9 +536,11 @@ gbm_dri_is_format_supported(struct gbm_d
-    switch (format) {
-    case GBM_BO_FORMAT_XRGB8888:
-    case GBM_FORMAT_XRGB8888:
-+   case GBM_FORMAT_XBGR8888:
-       break;
-    case GBM_BO_FORMAT_ARGB8888:
-    case GBM_FORMAT_ARGB8888:
-+   case GBM_FORMAT_ABGR8888:
-       if (usage & GBM_BO_USE_SCANOUT)
-          return 0;
-       break;
-@@ -620,6 +622,9 @@ gbm_dri_to_gbm_format(uint32_t dri_forma
-    case __DRI_IMAGE_FORMAT_ABGR8888:
-       ret = GBM_FORMAT_ABGR8888;
-       break;
-+   case __DRI_IMAGE_FORMAT_XBGR8888:
-+      ret = GBM_FORMAT_XBGR8888;
-+      break;
-    default:
-       ret = 0;
-       break;
-@@ -628,6 +633,41 @@ gbm_dri_to_gbm_format(uint32_t dri_forma
-    return ret;
- }
- 
-+static uint32_t
-+gbm_to_dri_format(uint32_t gbm_format)
-+{
-+   uint32_t dri_format = 0;
-+
-+   switch (gbm_format) {
-+   case GBM_FORMAT_RGB565:
-+      dri_format =__DRI_IMAGE_FORMAT_RGB565;
-+      break;
-+   case GBM_FORMAT_XRGB8888:
-+   case GBM_BO_FORMAT_XRGB8888:
-+      dri_format = __DRI_IMAGE_FORMAT_XRGB8888;
-+      break;
-+   case GBM_FORMAT_ARGB8888:
-+   case GBM_BO_FORMAT_ARGB8888:
-+      dri_format = __DRI_IMAGE_FORMAT_ARGB8888;
-+      break;
-+   case GBM_FORMAT_ABGR8888:
-+      dri_format = __DRI_IMAGE_FORMAT_ABGR8888;
-+      break;
-+   case GBM_FORMAT_ARGB2101010:
-+      dri_format = __DRI_IMAGE_FORMAT_ARGB2101010;
-+      break;
-+   case GBM_FORMAT_XRGB2101010:
-+      dri_format = __DRI_IMAGE_FORMAT_XRGB2101010;
-+   case GBM_FORMAT_XBGR8888:
-+      dri_format = __DRI_IMAGE_FORMAT_XBGR8888;
-+      break;
-+   default:
-+      dri_format = __DRI_IMAGE_FORMAT_NONE;
-+   }
-+
-+   return dri_format;
-+}
-+
- static struct gbm_bo *
- gbm_dri_bo_import(struct gbm_device *gbm,
-                   uint32_t type, void *buffer, uint32_t usage)
-@@ -852,31 +892,7 @@ gbm_dri_bo_create(struct gbm_device *gbm
-    bo->base.base.height = height;
-    bo->base.base.format = format;
- 
--   switch (format) {
--   case GBM_FORMAT_RGB565:
--      dri_format =__DRI_IMAGE_FORMAT_RGB565;
--      break;
--   case GBM_FORMAT_XRGB8888:
--   case GBM_BO_FORMAT_XRGB8888:
--      dri_format = __DRI_IMAGE_FORMAT_XRGB8888;
--      break;
--   case GBM_FORMAT_ARGB8888:
--   case GBM_BO_FORMAT_ARGB8888:
--      dri_format = __DRI_IMAGE_FORMAT_ARGB8888;
--      break;
--   case GBM_FORMAT_ABGR8888:
--      dri_format = __DRI_IMAGE_FORMAT_ABGR8888;
--      break;
--   case GBM_FORMAT_ARGB2101010:
--      dri_format = __DRI_IMAGE_FORMAT_ARGB2101010;
--      break;
--   case GBM_FORMAT_XRGB2101010:
--      dri_format = __DRI_IMAGE_FORMAT_XRGB2101010;
--      break;
--   default:
--      errno = EINVAL;
--      goto failed;
--   }
-+   dri_format = gbm_to_dri_format(format);
- 
-    if (usage & GBM_BO_USE_SCANOUT)
-       dri_use |= __DRI_IMAGE_USE_SCANOUT;
 Index: mesa/src/egl/Makefile.am
 ===================================================================
---- mesa.orig/src/egl/Makefile.am
-+++ mesa/src/egl/Makefile.am
-@@ -84,6 +84,12 @@ AM_CFLAGS += -DHAVE_SURFACELESS_PLATFORM
- dri2_backend_FILES += drivers/dri2/platform_surfaceless.c
+--- mesa.orig/src/egl/Makefile.am	2017-08-10 16:37:31.970030645 +1000
++++ mesa/src/egl/Makefile.am	2017-08-10 17:18:19.000000000 +1000
+@@ -104,6 +104,12 @@
+ dri2_backend_FILES += drivers/dri2/platform_android.c
  endif
  
-+if HAVE_EGL_PLATFORM_MIR
++if HAVE_PLATFORM_MIR
 +AM_CFLAGS += -DHAVE_MIR_PLATFORM
 +AM_CFLAGS += $(MIR_CFLAGS)
 +dri2_backend_FILES += drivers/dri2/platform_mir.c
 +endif
 +
- if HAVE_EGL_DRIVER_DRI2
  AM_CFLAGS += \
  	-I$(top_srcdir)/src/loader \
+ 	-I$(top_builddir)/src/egl/drivers/dri2 \

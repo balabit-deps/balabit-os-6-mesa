@@ -348,27 +348,6 @@ fd3_pipe2nblocksx(enum pipe_format format, unsigned width)
 	return util_format_get_nblocksx(format, width);
 }
 
-/* we need to special case a bit the depth/stencil restore, because we are
- * using the texture sampler to blit into the depth/stencil buffer, *not*
- * into a color buffer.  Otherwise fd3_tex_swiz() will do the wrong thing,
- * as it is assuming that you are sampling into normal render target..
- */
-enum pipe_format
-fd3_gmem_restore_format(enum pipe_format format)
-{
-	switch (format) {
-	case PIPE_FORMAT_Z24X8_UNORM:
-	case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-		return PIPE_FORMAT_R8G8B8A8_UNORM;
-	case PIPE_FORMAT_Z16_UNORM:
-		return PIPE_FORMAT_R8G8_UNORM;
-	case PIPE_FORMAT_S8_UINT:
-		return PIPE_FORMAT_R8_UNORM;
-	default:
-		return format;
-	}
-}
-
 enum a3xx_color_fmt
 fd3_fs_output_format(enum pipe_format format)
 {
@@ -391,12 +370,12 @@ tex_swiz(unsigned swiz)
 {
 	switch (swiz) {
 	default:
-	case PIPE_SWIZZLE_RED:   return A3XX_TEX_X;
-	case PIPE_SWIZZLE_GREEN: return A3XX_TEX_Y;
-	case PIPE_SWIZZLE_BLUE:  return A3XX_TEX_Z;
-	case PIPE_SWIZZLE_ALPHA: return A3XX_TEX_W;
-	case PIPE_SWIZZLE_ZERO:  return A3XX_TEX_ZERO;
-	case PIPE_SWIZZLE_ONE:   return A3XX_TEX_ONE;
+	case PIPE_SWIZZLE_X: return A3XX_TEX_X;
+	case PIPE_SWIZZLE_Y: return A3XX_TEX_Y;
+	case PIPE_SWIZZLE_Z: return A3XX_TEX_Z;
+	case PIPE_SWIZZLE_W: return A3XX_TEX_W;
+	case PIPE_SWIZZLE_0: return A3XX_TEX_ZERO;
+	case PIPE_SWIZZLE_1: return A3XX_TEX_ONE;
 	}
 }
 
