@@ -46,13 +46,13 @@ struct stw_st_framebuffer {
    unsigned texture_mask;
 };
 
-
+static uint32_t stwfb_ID = 0;
 
 /**
  * Is the given mutex held by the calling thread?
  */
-static bool
-own_mutex(const CRITICAL_SECTION *cs)
+bool
+stw_own_mutex(const CRITICAL_SECTION *cs)
 {
    // We can't compare OwningThread with our thread handle/id (see
    // http://stackoverflow.com/a/12675635 ) but we can compare with the
@@ -161,10 +161,8 @@ stw_st_framebuffer_validate(struct st_context_iface *stctx,
       stwfb->fb->must_resize = FALSE;
    }
 
-   for (i = 0; i < count; i++) {
-      out[i] = NULL;
+   for (i = 0; i < count; i++)
       pipe_resource_reference(&out[i], stwfb->textures[statts[i]]);
-   }
 
    stw_framebuffer_unlock(stwfb->fb);
 
@@ -182,7 +180,7 @@ stw_st_framebuffer_present_locked(HDC hdc,
    struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    struct pipe_resource *resource;
 
-   assert(own_mutex(&stwfb->fb->mutex));
+   assert(stw_own_mutex(&stwfb->fb->mutex));
 
    resource = stwfb->textures[statt];
    if (resource) {
@@ -192,7 +190,7 @@ stw_st_framebuffer_present_locked(HDC hdc,
       stw_framebuffer_unlock(stwfb->fb);
    }
 
-   assert(!own_mutex(&stwfb->fb->mutex));
+   assert(!stw_own_mutex(&stwfb->fb->mutex));
 
    return TRUE;
 }
@@ -234,6 +232,8 @@ stw_st_create_framebuffer(struct stw_framebuffer *fb)
 
    stwfb->fb = fb;
    stwfb->stvis = fb->pfi->stvis;
+   stwfb->base.ID = p_atomic_inc_return(&stwfb_ID);
+   stwfb->base.state_manager = stw_dev->smapi;
 
    stwfb->base.visual = &stwfb->stvis;
    p_atomic_set(&stwfb->base.stamp, 1);
@@ -254,6 +254,11 @@ stw_st_destroy_framebuffer_locked(struct st_framebuffer_iface *stfb)
 
    for (i = 0; i < ST_ATTACHMENT_COUNT; i++)
       pipe_resource_reference(&stwfb->textures[i], NULL);
+
+   /* Notify the st manager that the framebuffer interface is no
+    * longer valid.
+    */
+   stw_dev->stapi->destroy_drawable(stw_dev->stapi, &stwfb->base);
 
    FREE(stwfb);
 }

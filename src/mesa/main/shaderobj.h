@@ -66,6 +66,11 @@ _mesa_reference_shader_program_(struct gl_context *ctx,
                                struct gl_shader_program **ptr,
                                struct gl_shader_program *shProg);
 
+void
+_mesa_reference_shader_program_data(struct gl_context *ctx,
+                                    struct gl_shader_program_data **ptr,
+                                    struct gl_shader_program_data *data);
+
 static inline void
 _mesa_reference_shader_program(struct gl_context *ctx,
                                struct gl_shader_program **ptr,
@@ -75,15 +80,15 @@ _mesa_reference_shader_program(struct gl_context *ctx,
       _mesa_reference_shader_program_(ctx, ptr, shProg);
 }
 
-
-extern void
-_mesa_init_shader(struct gl_context *ctx, struct gl_shader *shader);
-
 extern struct gl_shader *
-_mesa_new_shader(struct gl_context *ctx, GLuint name, GLenum type);
+_mesa_new_shader(GLuint name, gl_shader_stage type);
 
 extern void
 _mesa_delete_shader(struct gl_context *ctx, struct gl_shader *sh);
+
+extern void
+_mesa_delete_linked_shader(struct gl_context *ctx,
+                           struct gl_linked_shader *sh);
 
 extern struct gl_shader_program *
 _mesa_lookup_shader_program(struct gl_context *ctx, GLuint name);
@@ -95,8 +100,12 @@ _mesa_lookup_shader_program_err(struct gl_context *ctx, GLuint name,
 extern struct gl_shader_program *
 _mesa_new_shader_program(GLuint name);
 
+extern struct gl_shader_program_data *
+_mesa_create_shader_program_data(void);
+
 extern void
-_mesa_clear_shader_program_data(struct gl_shader_program *shProg);
+_mesa_clear_shader_program_data(struct gl_context *ctx,
+                                struct gl_shader_program *shProg);
 
 extern void
 _mesa_free_shader_program_data(struct gl_context *ctx,
@@ -210,6 +219,8 @@ _mesa_shader_stage_to_subroutine(gl_shader_stage stage)
       return GL_TESS_CONTROL_SUBROUTINE;
    case MESA_SHADER_TESS_EVAL:
       return GL_TESS_EVALUATION_SUBROUTINE;
+   case MESA_SHADER_NONE:
+      break;
    }
    unreachable("not reached");
 }
@@ -230,6 +241,8 @@ _mesa_shader_stage_to_subroutine_uniform(gl_shader_stage stage)
       return GL_TESS_CONTROL_SUBROUTINE_UNIFORM;
    case MESA_SHADER_TESS_EVAL:
       return GL_TESS_EVALUATION_SUBROUTINE_UNIFORM;
+   case MESA_SHADER_NONE:
+      break;
    }
    unreachable("not reached");
 }

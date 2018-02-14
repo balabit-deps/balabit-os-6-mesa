@@ -25,6 +25,7 @@
 #include "ir.h"
 #include "linker.h"
 #include "ir_uniform.h"
+#include "string_to_uint_map.h"
 
 /* These functions are put in a "private" namespace instead of being marked
  * static so that the unit tests can access them.  See
@@ -33,56 +34,44 @@
 namespace linker {
 
 gl_uniform_storage *
-get_storage(gl_uniform_storage *storage, unsigned num_storage,
-	    const char *name)
+get_storage(struct gl_shader_program *prog, const char *name)
 {
-   for (unsigned int i = 0; i < num_storage; i++) {
-      if (strcmp(name, storage[i].name) == 0)
-	 return &storage[i];
-   }
+   unsigned id;
+   if (prog->UniformHash->get(id, name))
+      return &prog->data->UniformStorage[id];
 
+   assert(!"No uniform storage found!");
    return NULL;
-}
-
-static unsigned
-get_uniform_block_index(const gl_shader_program *shProg,
-                        const char *uniformBlockName)
-{
-   for (unsigned i = 0; i < shProg->NumBufferInterfaceBlocks; i++) {
-      if (!strcmp(shProg->BufferInterfaceBlocks[i].Name, uniformBlockName))
-	 return i;
-   }
-
-   return GL_INVALID_INDEX;
 }
 
 void
 copy_constant_to_storage(union gl_constant_value *storage,
-			 const ir_constant *val,
-			 const enum glsl_base_type base_type,
+                         const ir_constant *val,
+                         const enum glsl_base_type base_type,
                          const unsigned int elements,
                          unsigned int boolean_true)
 {
    for (unsigned int i = 0; i < elements; i++) {
       switch (base_type) {
       case GLSL_TYPE_UINT:
-	 storage[i].u = val->value.u[i];
-	 break;
+         storage[i].u = val->value.u[i];
+         break;
       case GLSL_TYPE_INT:
       case GLSL_TYPE_SAMPLER:
-	 storage[i].i = val->value.i[i];
-	 break;
+         storage[i].i = val->value.i[i];
+         break;
       case GLSL_TYPE_FLOAT:
-	 storage[i].f = val->value.f[i];
-	 break;
+         storage[i].f = val->value.f[i];
+         break;
       case GLSL_TYPE_DOUBLE:
+      case GLSL_TYPE_UINT64:
+      case GLSL_TYPE_INT64:
          /* XXX need to check on big-endian */
-         storage[i * 2].u = *(uint32_t *)&val->value.d[i];
-         storage[i * 2 + 1].u = *(((uint32_t *)&val->value.d[i]) + 1);
+         memcpy(&storage[i * 2].u, &val->value.d[i], sizeof(double));
          break;
       case GLSL_TYPE_BOOL:
-	 storage[i].b = val->value.b[i] ? boolean_true : 0;
-	 break;
+         storage[i].b = val->value.b[i] ? boolean_true : 0;
+         break;
       case GLSL_TYPE_ARRAY:
       case GLSL_TYPE_STRUCT:
       case GLSL_TYPE_IMAGE:
@@ -92,11 +81,11 @@ copy_constant_to_storage(union gl_constant_value *storage,
       case GLSL_TYPE_SUBROUTINE:
       case GLSL_TYPE_FUNCTION:
       case GLSL_TYPE_ERROR:
-	 /* All other types should have already been filtered by other
-	  * paths in the caller.
-	  */
-	 assert(!"Should not get here.");
-	 break;
+         /* All other types should have already been filtered by other
+          * paths in the caller.
+          */
+         assert(!"Should not get here.");
+         break;
       }
    }
 }
@@ -108,30 +97,28 @@ copy_constant_to_storage(union gl_constant_value *storage,
  */
 void
 set_opaque_binding(void *mem_ctx, gl_shader_program *prog,
-                   const glsl_type *type, const char *name, int *binding)
+                   const ir_variable *var, const glsl_type *type,
+                   const char *name, int *binding)
 {
 
    if (type->is_array() && type->fields.array->is_array()) {
       const glsl_type *const element_type = type->fields.array;
 
       for (unsigned int i = 0; i < type->length; i++) {
-	 const char *element_name = ralloc_asprintf(mem_ctx, "%s[%d]", name, i);
+         const char *element_name = ralloc_asprintf(mem_ctx, "%s[%d]", name, i);
 
-	 set_opaque_binding(mem_ctx, prog, element_type,
+         set_opaque_binding(mem_ctx, prog, var, element_type,
                             element_name, binding);
       }
    } else {
-      struct gl_uniform_storage *const storage =
-         get_storage(prog->UniformStorage, prog->NumUniformStorage, name);
+      struct gl_uniform_storage *const storage = get_storage(prog, name);
 
-      if (storage == NULL) {
-         assert(storage != NULL);
+      if (!storage)
          return;
-      }
 
       const unsigned elements = MAX2(storage->array_elements, 1);
 
-      /* Section 4.4.4 (Opaque-Uniform Layout Qualifiers) of the GLSL 4.20 spec
+      /* Section 4.4.6 (Opaque-Uniform Layout Qualifiers) of the GLSL 4.50 spec
        * says:
        *
        *     "If the binding identifier is used with an array, the first element
@@ -143,54 +130,78 @@ set_opaque_binding(void *mem_ctx, gl_shader_program *prog,
       }
 
       for (int sh = 0; sh < MESA_SHADER_STAGES; sh++) {
-        gl_shader *shader = prog->_LinkedShaders[sh];
+         gl_linked_shader *shader = prog->_LinkedShaders[sh];
 
-         if (shader) {
-            if (storage->type->base_type == GLSL_TYPE_SAMPLER &&
-                storage->opaque[sh].active) {
-               for (unsigned i = 0; i < elements; i++) {
-                  const unsigned index = storage->opaque[sh].index + i;
-                  shader->SamplerUnits[index] = storage->storage[i].i;
+         if (!shader)
+            continue;
+         if (!storage->opaque[sh].active)
+            continue;
+
+         if (storage->type->is_sampler()) {
+            for (unsigned i = 0; i < elements; i++) {
+               const unsigned index = storage->opaque[sh].index + i;
+
+               if (var->data.bindless) {
+                  if (index >= shader->Program->sh.NumBindlessSamplers)
+                     break;
+                  shader->Program->sh.BindlessSamplers[index].unit =
+                     storage->storage[i].i;
+                  shader->Program->sh.BindlessSamplers[index].bound = true;
+                  shader->Program->sh.HasBoundBindlessSampler = true;
+               } else {
+                  if (index >= ARRAY_SIZE(shader->Program->SamplerUnits))
+                     break;
+                  shader->Program->SamplerUnits[index] =
+                     storage->storage[i].i;
                }
+            }
+         } else if (storage->type->is_image()) {
+            for (unsigned i = 0; i < elements; i++) {
+               const unsigned index = storage->opaque[sh].index + i;
 
-            } else if (storage->type->base_type == GLSL_TYPE_IMAGE &&
-                    storage->opaque[sh].active) {
-               for (unsigned i = 0; i < elements; i++) {
-                  const unsigned index = storage->opaque[sh].index + i;
-                  shader->ImageUnits[index] = storage->storage[i].i;
+
+               if (var->data.bindless) {
+                  if (index >= shader->Program->sh.NumBindlessImages)
+                     break;
+                  shader->Program->sh.BindlessImages[index].unit =
+                     storage->storage[i].i;
+                  shader->Program->sh.BindlessImages[index].bound = true;
+                  shader->Program->sh.HasBoundBindlessImage = true;
+               } else {
+                  if (index >= ARRAY_SIZE(shader->Program->sh.ImageUnits))
+                     break;
+                  shader->Program->sh.ImageUnits[index] =
+                     storage->storage[i].i;
                }
             }
          }
       }
-
-      storage->initialized = true;
    }
 }
 
 void
-set_block_binding(gl_shader_program *prog, const char *block_name, int binding)
+set_block_binding(gl_shader_program *prog, const char *block_name,
+                  unsigned mode, int binding)
 {
-   const unsigned block_index = get_uniform_block_index(prog, block_name);
+   unsigned num_blocks = mode == ir_var_uniform ?
+      prog->data->NumUniformBlocks :
+      prog->data->NumShaderStorageBlocks;
+   struct gl_uniform_block *blks = mode == ir_var_uniform ?
+      prog->data->UniformBlocks : prog->data->ShaderStorageBlocks;
 
-   if (block_index == GL_INVALID_INDEX) {
-      assert(block_index != GL_INVALID_INDEX);
-      return;
+   for (unsigned i = 0; i < num_blocks; i++) {
+      if (!strcmp(blks[i].Name, block_name)) {
+         blks[i].Binding = binding;
+         return;
+      }
    }
 
-      /* This is a field of a UBO.  val is the binding index. */
-      for (int i = 0; i < MESA_SHADER_STAGES; i++) {
-         int stage_index = prog->InterfaceBlockStageIndex[i][block_index];
-
-         if (stage_index != -1) {
-            struct gl_shader *sh = prog->_LinkedShaders[i];
-            sh->BufferInterfaceBlocks[stage_index].Binding = binding;
-         }
-      }
+   unreachable("Failed to initialize block binding");
 }
 
 void
 set_uniform_initializer(void *mem_ctx, gl_shader_program *prog,
-			const char *name, const glsl_type *type,
+                        const char *name, const glsl_type *type,
                         ir_constant *val, unsigned int boolean_true)
 {
    const glsl_type *t_without_array = type->without_array();
@@ -200,12 +211,12 @@ set_uniform_initializer(void *mem_ctx, gl_shader_program *prog,
       field_constant = (ir_constant *)val->components.get_head();
 
       for (unsigned int i = 0; i < type->length; i++) {
-	 const glsl_type *field_type = type->fields.structure[i].type;
-	 const char *field_name = ralloc_asprintf(mem_ctx, "%s.%s", name,
-					    type->fields.structure[i].name);
-	 set_uniform_initializer(mem_ctx, prog, field_name,
+         const glsl_type *field_type = type->fields.structure[i].type;
+         const char *field_name = ralloc_asprintf(mem_ctx, "%s.%s", name,
+                                            type->fields.structure[i].name);
+         set_uniform_initializer(mem_ctx, prog, field_name,
                                  field_type, field_constant, boolean_true);
-	 field_constant = (ir_constant *)field_constant->next;
+         field_constant = (ir_constant *)field_constant->next;
       }
       return;
    } else if (t_without_array->is_record() ||
@@ -213,62 +224,56 @@ set_uniform_initializer(void *mem_ctx, gl_shader_program *prog,
       const glsl_type *const element_type = type->fields.array;
 
       for (unsigned int i = 0; i < type->length; i++) {
-	 const char *element_name = ralloc_asprintf(mem_ctx, "%s[%d]", name, i);
+         const char *element_name = ralloc_asprintf(mem_ctx, "%s[%d]", name, i);
 
-	 set_uniform_initializer(mem_ctx, prog, element_name,
+         set_uniform_initializer(mem_ctx, prog, element_name,
                                  element_type, val->array_elements[i],
                                  boolean_true);
       }
       return;
    }
 
-   struct gl_uniform_storage *const storage =
-      get_storage(prog->UniformStorage,
-                  prog->NumUniformStorage,
-		  name);
-   if (storage == NULL) {
-      assert(storage != NULL);
+   struct gl_uniform_storage *const storage = get_storage(prog, name);
+
+   if (!storage)
       return;
-   }
 
    if (val->type->is_array()) {
       const enum glsl_base_type base_type =
-	 val->array_elements[0]->type->base_type;
+         val->array_elements[0]->type->base_type;
       const unsigned int elements = val->array_elements[0]->type->components();
       unsigned int idx = 0;
-      unsigned dmul = (base_type == GLSL_TYPE_DOUBLE) ? 2 : 1;
+      unsigned dmul = glsl_base_type_is_64bit(base_type) ? 2 : 1;
 
       assert(val->type->length >= storage->array_elements);
       for (unsigned int i = 0; i < storage->array_elements; i++) {
-	 copy_constant_to_storage(& storage->storage[idx],
-				  val->array_elements[i],
-				  base_type,
+         copy_constant_to_storage(& storage->storage[idx],
+                                  val->array_elements[i],
+                                  base_type,
                                   elements,
                                   boolean_true);
 
-	 idx += elements * dmul;
+         idx += elements * dmul;
       }
    } else {
       copy_constant_to_storage(storage->storage,
-			       val,
-			       val->type->base_type,
+                               val,
+                               val->type->base_type,
                                val->type->components(),
                                boolean_true);
 
       if (storage->type->is_sampler()) {
          for (int sh = 0; sh < MESA_SHADER_STAGES; sh++) {
-            gl_shader *shader = prog->_LinkedShaders[sh];
+            gl_linked_shader *shader = prog->_LinkedShaders[sh];
 
             if (shader && storage->opaque[sh].active) {
                unsigned index = storage->opaque[sh].index;
 
-               shader->SamplerUnits[index] = storage->storage[0].i;
+               shader->Program->SamplerUnits[index] = storage->storage[0].i;
             }
          }
       }
    }
-
-   storage->initialized = true;
 }
 }
 
@@ -279,20 +284,20 @@ link_set_uniform_initializers(struct gl_shader_program *prog,
    void *mem_ctx = NULL;
 
    for (unsigned int i = 0; i < MESA_SHADER_STAGES; i++) {
-      struct gl_shader *shader = prog->_LinkedShaders[i];
+      struct gl_linked_shader *shader = prog->_LinkedShaders[i];
 
       if (shader == NULL)
-	 continue;
+         continue;
 
       foreach_in_list(ir_instruction, node, shader->ir) {
-	 ir_variable *const var = node->as_variable();
+         ir_variable *const var = node->as_variable();
 
-	 if (!var || (var->data.mode != ir_var_uniform &&
-	     var->data.mode != ir_var_shader_storage))
-	    continue;
+         if (!var || (var->data.mode != ir_var_uniform &&
+             var->data.mode != ir_var_shader_storage))
+            continue;
 
-	 if (!mem_ctx)
-	    mem_ctx = ralloc_context(NULL);
+         if (!mem_ctx)
+            mem_ctx = ralloc_context(NULL);
 
          if (var->data.explicit_binding) {
             const glsl_type *const type = var->type;
@@ -300,7 +305,7 @@ link_set_uniform_initializers(struct gl_shader_program *prog,
             if (type->without_array()->is_sampler() ||
                 type->without_array()->is_image()) {
                int binding = var->data.binding;
-               linker::set_opaque_binding(mem_ctx, prog, var->type,
+               linker::set_opaque_binding(mem_ctx, prog, var, var->type,
                                           var->name, &binding);
             } else if (var->is_in_buffer_block()) {
                const glsl_type *const iface_type = var->get_interface_type();
@@ -332,11 +337,12 @@ link_set_uniform_initializers(struct gl_shader_program *prog,
                       *     each subsequent element takes the next consecutive
                       *     uniform block binding point."
                       */
-                     linker::set_block_binding(prog, name,
+                     linker::set_block_binding(prog, name, var->data.mode,
                                                var->data.binding + i);
                   }
                } else {
                   linker::set_block_binding(prog, iface_type->name,
+                                            var->data.mode,
                                             var->data.binding);
                }
             } else if (type->contains_atomic()) {

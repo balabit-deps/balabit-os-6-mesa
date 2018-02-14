@@ -125,7 +125,7 @@ dri_sw_displaytarget_destroy(struct sw_winsys *ws,
 {
    struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
 
-   FREE(dri_sw_dt->data);
+   align_free(dri_sw_dt->data);
 
    FREE(dri_sw_dt);
 }
@@ -200,7 +200,7 @@ dri_sw_displaytarget_display(struct sw_winsys *ws,
 
    if (box) {
        void *data;
-       data = dri_sw_dt->data + (dri_sw_dt->stride * box->y) + box->x * blsize;
+       data = (char *)dri_sw_dt->data + (dri_sw_dt->stride * box->y) + box->x * blsize;
        dri_sw_ws->lf->put_image2(dri_drawable, data,
                                  box->x, box->y, box->width, box->height, dri_sw_dt->stride);
    } else {

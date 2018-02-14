@@ -115,16 +115,17 @@ color_buffer_writes_enabled(const struct gl_context *ctx, unsigned idx)
 {
    struct gl_renderbuffer *rb = ctx->DrawBuffer->_ColorDrawBuffers[idx];
    GLuint c;
-   GLubyte colorMask = 0;
 
    if (rb) {
       for (c = 0; c < 4; c++) {
-         if (_mesa_format_has_color_component(rb->Format, c))
-            colorMask |= ctx->Color.ColorMask[idx][c];
+         if (ctx->Color.ColorMask[idx][c] &&
+             _mesa_format_has_color_component(rb->Format, c)) {
+            return true;
+         }
       }
    }
 
-   return colorMask != 0;
+   return false;
 }
 
 
@@ -139,40 +140,36 @@ color_buffer_writes_enabled(const struct gl_context *ctx, unsigned idx)
  * GL_RENDER then requests the driver to clear the buffers, via the
  * dd_function_table::Clear callback.
  */
-void GLAPIENTRY
-_mesa_Clear( GLbitfield mask )
+static ALWAYS_INLINE void
+clear(struct gl_context *ctx, GLbitfield mask, bool no_error)
 {
-   GET_CURRENT_CONTEXT(ctx);
    FLUSH_VERTICES(ctx, 0);
-
    FLUSH_CURRENT(ctx, 0);
 
-   if (MESA_VERBOSE & VERBOSE_API)
-      _mesa_debug(ctx, "glClear 0x%x\n", mask);
+   if (!no_error) {
+      if (mask & ~(GL_COLOR_BUFFER_BIT |
+                   GL_DEPTH_BUFFER_BIT |
+                   GL_STENCIL_BUFFER_BIT |
+                   GL_ACCUM_BUFFER_BIT)) {
+         _mesa_error( ctx, GL_INVALID_VALUE, "glClear(0x%x)", mask);
+         return;
+      }
 
-   if (mask & ~(GL_COLOR_BUFFER_BIT |
-                GL_DEPTH_BUFFER_BIT |
-                GL_STENCIL_BUFFER_BIT |
-                GL_ACCUM_BUFFER_BIT)) {
-      /* invalid bit set */
-      _mesa_error( ctx, GL_INVALID_VALUE, "glClear(0x%x)", mask);
-      return;
-   }
-
-   /* Accumulation buffers were removed in core contexts, and they never
-    * existed in OpenGL ES.
-    */
-   if ((mask & GL_ACCUM_BUFFER_BIT) != 0
-       && (ctx->API == API_OPENGL_CORE || _mesa_is_gles(ctx))) {
-      _mesa_error( ctx, GL_INVALID_VALUE, "glClear(GL_ACCUM_BUFFER_BIT)");
-      return;
+      /* Accumulation buffers were removed in core contexts, and they never
+       * existed in OpenGL ES.
+       */
+      if ((mask & GL_ACCUM_BUFFER_BIT) != 0
+          && (ctx->API == API_OPENGL_CORE || _mesa_is_gles(ctx))) {
+         _mesa_error( ctx, GL_INVALID_VALUE, "glClear(GL_ACCUM_BUFFER_BIT)");
+         return;
+      }
    }
 
    if (ctx->NewState) {
       _mesa_update_state( ctx );	/* update _Xmin, etc */
    }
 
-   if (ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE_EXT) {
+   if (!no_error && ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE_EXT) {
       _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION_EXT,
                   "glClear(incomplete framebuffer)");
       return;
@@ -226,6 +223,26 @@ _mesa_Clear( GLbitfield mask )
 }
 
 
+void GLAPIENTRY
+_mesa_Clear_no_error(GLbitfield mask)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   clear(ctx, mask, true);
+}
+
+
+void GLAPIENTRY
+_mesa_Clear(GLbitfield mask)
+{
+   GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glClear 0x%x\n", mask);
+
+   clear(ctx, mask, false);
+}
+
+
 /** Returned by make_color_buffer_mask() for errors */
 #define INVALID_MASK ~0x0U
 
@@ -267,6 +284,14 @@ make_color_buffer_mask(struct gl_context *ctx, GLint drawbuffer)
          mask |= BUFFER_BIT_FRONT_RIGHT;
       break;
    case GL_BACK:
+      /* For GLES contexts with a single buffered configuration, we actually
+       * only have a front renderbuffer, so any clear calls to GL_BACK should
+       * affect that buffer. See draw_buffer_enum_to_bitmask for details.
+       */
+      if (_mesa_is_gles(ctx))
+         if (!ctx->DrawBuffer->Visual.doubleBufferMode)
+            if (att[BUFFER_FRONT_LEFT].Renderbuffer)
+               mask |= BUFFER_BIT_FRONT_LEFT;
       if (att[BUFFER_BACK_LEFT].Renderbuffer)
          mask |= BUFFER_BIT_BACK_LEFT;
       if (att[BUFFER_BACK_RIGHT].Renderbuffer)
@@ -646,12 +671,12 @@ _mesa_ClearBufferfi(GLenum buffer, GLint drawbuffer,
  */
 void GLAPIENTRY
 _mesa_ClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer,
-                              GLfloat depth, GLint stencil)
+                              GLint drawbuffer, GLfloat depth, GLint stencil)
 {
    GLint oldfb;
 
    _mesa_GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldfb);
    _mesa_BindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
-   _mesa_ClearBufferfi(buffer, 0, depth, stencil);
+   _mesa_ClearBufferfi(buffer, drawbuffer, depth, stencil);
    _mesa_BindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint) oldfb);
 }

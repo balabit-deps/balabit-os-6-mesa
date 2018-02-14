@@ -29,11 +29,11 @@
 #ifndef PIPE_FORMAT_H
 #define PIPE_FORMAT_H
 
+#include "p_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "p_config.h"
 
 /**
  * Formats for textures, surfaces and vertex data
@@ -389,6 +389,8 @@ enum pipe_format {
    PIPE_FORMAT_ASTC_12x10_SRGB         = 305,
    PIPE_FORMAT_ASTC_12x12_SRGB         = 306,
 
+   PIPE_FORMAT_P016                    = 307,
+
    PIPE_FORMAT_COUNT
 };
 
@@ -432,7 +434,6 @@ enum pipe_format {
 #elif defined(PIPE_ARCH_BIG_ENDIAN)
 #define PIPE_FORMAT_ABGR8888_UNORM PIPE_FORMAT_R8G8B8A8_UNORM
 #define PIPE_FORMAT_XBGR8888_UNORM PIPE_FORMAT_R8G8B8X8_UNORM
-#define PIPE_FORMAT_XRGB8888_UNORM PIPE_FORMAT_B8G8R8X8_UNORM
 #define PIPE_FORMAT_ARGB8888_UNORM PIPE_FORMAT_B8G8R8A8_UNORM
 #define PIPE_FORMAT_XRGB8888_UNORM PIPE_FORMAT_B8G8R8X8_UNORM
 #define PIPE_FORMAT_BGRA8888_UNORM PIPE_FORMAT_A8R8G8B8_UNORM

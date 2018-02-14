@@ -31,7 +31,7 @@
 #include "enums.h"
 #include "extensions.h"
 #include "mtypes.h"
-
+#include "macros.h"
 
 /**
  * Return the string for a glGetString(GL_SHADING_LANGUAGE_VERSION) query.
@@ -80,6 +80,8 @@ shading_language_version(struct gl_context *ctx)
          return (const GLubyte *) "OpenGL ES GLSL ES 3.00";
       case 31:
          return (const GLubyte *) "OpenGL ES GLSL ES 3.10";
+      case 32:
+         return (const GLubyte *) "OpenGL ES GLSL ES 3.20";
       default:
          _mesa_problem(ctx,
                        "Invalid OpenGL ES version in shading_language_version()");
@@ -302,66 +304,21 @@ _mesa_GetError( void )
    GLenum e = ctx->ErrorValue;
    ASSERT_OUTSIDE_BEGIN_END_WITH_RETVAL(ctx, 0);
 
+   /* From Issue (3) of the KHR_no_error spec:
+    *
+    *    "Should glGetError() always return NO_ERROR or have undefined
+    *    results?
+    *
+    *    RESOLVED: It should for all errors except OUT_OF_MEMORY."
+    */
+   if (_mesa_is_no_error_enabled(ctx) && e != GL_OUT_OF_MEMORY) {
+      e = GL_NO_ERROR;
+   }
+
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glGetError <-- %s\n", _mesa_enum_to_string(e));
 
    ctx->ErrorValue = (GLenum) GL_NO_ERROR;
    ctx->ErrorDebugCount = 0;
    return e;
-}
-
-/**
- * Returns an error code specified by GL_ARB_robustness, or GL_NO_ERROR.
- * \return current context status
- */
-GLenum GLAPIENTRY
-_mesa_GetGraphicsResetStatusARB( void )
-{
-   GET_CURRENT_CONTEXT(ctx);
-   GLenum status = GL_NO_ERROR;
-
-   /* The ARB_robustness specification says:
-    *
-    *     "If the reset notification behavior is NO_RESET_NOTIFICATION_ARB,
-    *     then the implementation will never deliver notification of reset
-    *     events, and GetGraphicsResetStatusARB will always return NO_ERROR."
-    */
-   if (ctx->Const.ResetStrategy == GL_NO_RESET_NOTIFICATION_ARB) {
-      if (MESA_VERBOSE & VERBOSE_API)
-         _mesa_debug(ctx,
-                     "glGetGraphicsResetStatusARB always returns GL_NO_ERROR "
-                     "because reset notifictation was not requested at context "
-                     "creation.\n");
-
-      return GL_NO_ERROR;
-   }
-
-   if (ctx->Driver.GetGraphicsResetStatus) {
-      /* Query the reset status of this context from the driver core.
-       */
-      status = ctx->Driver.GetGraphicsResetStatus(ctx);
-
-      mtx_lock(&ctx->Shared->Mutex);
-
-      /* If this context has not been affected by a GPU reset, check to see if
-       * some other context in the share group has been affected by a reset.
-       * If another context saw a reset but this context did not, assume that
-       * this context was not guilty.
-       */
-      if (status != GL_NO_ERROR) {
-         ctx->Shared->ShareGroupReset = true;
-      } else if (ctx->Shared->ShareGroupReset && !ctx->ShareGroupReset) {
-         status = GL_INNOCENT_CONTEXT_RESET_ARB;
-      }
-
-      ctx->ShareGroupReset = ctx->Shared->ShareGroupReset;
-      mtx_unlock(&ctx->Shared->Mutex);
-   }
-
-   if (!ctx->Driver.GetGraphicsResetStatus && (MESA_VERBOSE & VERBOSE_API))
-      _mesa_debug(ctx,
-                  "glGetGraphicsResetStatusARB always returns GL_NO_ERROR "
-                  "because the driver doesn't track reset status.\n");
-
-   return status;
 }

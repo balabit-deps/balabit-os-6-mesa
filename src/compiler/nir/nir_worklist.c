@@ -37,7 +37,7 @@ nir_block_worklist_init(nir_block_worklist *w, unsigned num_blocks,
 
    w->blocks_present = rzalloc_array(mem_ctx, BITSET_WORD,
                                      BITSET_WORDS(num_blocks));
-   w->blocks = ralloc_array(mem_ctx, nir_block *, num_blocks);
+   w->blocks = rzalloc_array(mem_ctx, nir_block *, num_blocks);
 }
 
 void
@@ -47,18 +47,12 @@ nir_block_worklist_fini(nir_block_worklist *w)
    ralloc_free(w->blocks);
 }
 
-static bool
-worklist_add_block(nir_block *block, void *w)
-{
-   nir_block_worklist_push_tail(w, block);
-
-   return true;
-}
-
 void
 nir_block_worklist_add_all(nir_block_worklist *w, nir_function_impl *impl)
 {
-   nir_foreach_block(impl, worklist_add_block, w);
+   nir_foreach_block(block, impl) {
+      nir_block_worklist_push_tail(w, block);
+   }
 }
 
 void

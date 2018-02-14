@@ -32,6 +32,7 @@ env.Prepend(LIBS = [
     compiler,
     mesa,
     glsl,
+    nir,
     gallium,
 ])
 
@@ -47,12 +48,20 @@ if env['llvm']:
     env.Append(CPPDEFINES = ['GALLIUM_LLVMPIPE'])
     env.Prepend(LIBS = [llvmpipe])
 
+    if env['swr']:
+        env.Append(CPPDEFINES = 'GALLIUM_SWR')
+        env.Prepend(LIBS = [swr])
+
 if env['platform'] != 'darwin':
+    # Disallow undefined symbols, except with Address Sanitizer, since libasan
+    # is not linked on shared libs, as it should be LD_PRELOAD'ed instead
+    if not env['asan']:
+        env.Append(SHLINKFLAGS = [
+            '-Wl,-z,defs',
+        ])
     env.Append(SHLINKFLAGS = [
-       # Disallow undefined symbols
-       '-Wl,-z,defs',
-       # Restrict exported symbols
-       '-Wl,--version-script=%s' % File("libgl-xlib.sym").srcnode().path,
+        # Restrict exported symbols
+        '-Wl,--version-script=%s' % File("libgl-xlib.sym").srcnode().path,
     ])
 
 # libGL.so.1.5

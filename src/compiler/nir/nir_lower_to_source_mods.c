@@ -34,9 +34,11 @@
  */
 
 static bool
-nir_lower_to_source_mods_block(nir_block *block, void *state)
+nir_lower_to_source_mods_block(nir_block *block)
 {
-   nir_foreach_instr(block, instr) {
+   bool progress = false;
+
+   nir_foreach_instr(instr, block) {
       if (instr->type != nir_instr_type_alu)
          continue;
 
@@ -54,7 +56,7 @@ nir_lower_to_source_mods_block(nir_block *block, void *state)
          if (parent->dest.saturate)
             continue;
 
-         switch (nir_op_infos[alu->op].input_types[i]) {
+         switch (nir_alu_type_get_base_type(nir_op_infos[alu->op].input_types[i])) {
          case nir_type_float:
             if (parent->op != nir_op_fmov)
                continue;
@@ -91,6 +93,8 @@ nir_lower_to_source_mods_block(nir_block *block, void *state)
          if (list_empty(&parent->dest.dest.ssa.uses) &&
              list_empty(&parent->dest.dest.ssa.if_uses))
             nir_instr_remove(&parent->instr);
+
+         progress = true;
       }
 
       switch (alu->op) {
@@ -128,14 +132,15 @@ nir_lower_to_source_mods_block(nir_block *block, void *state)
          continue;
 
       /* We can only saturate float destinations */
-      if (nir_op_infos[alu->op].output_type != nir_type_float)
+      if (nir_alu_type_get_base_type(nir_op_infos[alu->op].output_type) !=
+          nir_type_float)
          continue;
 
       if (!list_empty(&alu->dest.dest.ssa.if_uses))
          continue;
 
       bool all_children_are_sat = true;
-      nir_foreach_use(&alu->dest.dest.ssa, child_src) {
+      nir_foreach_use(child_src, &alu->dest.dest.ssa) {
          assert(child_src->is_ssa);
          nir_instr *child = child_src->parent_instr;
          if (child->type != nir_instr_type_alu) {
@@ -160,12 +165,11 @@ nir_lower_to_source_mods_block(nir_block *block, void *state)
          continue;
 
       alu->dest.saturate = true;
+      progress = true;
 
-      nir_foreach_use(&alu->dest.dest.ssa, child_src) {
+      nir_foreach_use(child_src, &alu->dest.dest.ssa) {
          assert(child_src->is_ssa);
-         nir_instr *child = child_src->parent_instr;
-         assert(child->type == nir_instr_type_alu);
-         nir_alu_instr *child_alu = nir_instr_as_alu(child);
+         nir_alu_instr *child_alu = nir_instr_as_alu(child_src->parent_instr);
 
          child_alu->op = nir_op_fmov;
          child_alu->dest.saturate = false;
@@ -177,20 +181,35 @@ nir_lower_to_source_mods_block(nir_block *block, void *state)
       }
    }
 
-   return true;
+   return progress;
 }
 
-static void
+static bool
 nir_lower_to_source_mods_impl(nir_function_impl *impl)
 {
-   nir_foreach_block(impl, nir_lower_to_source_mods_block, NULL);
+   bool progress = false;
+
+   nir_foreach_block(block, impl) {
+      progress |= nir_lower_to_source_mods_block(block);
+   }
+
+   if (progress)
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+
+   return progress;
 }
 
-void
+bool
 nir_lower_to_source_mods(nir_shader *shader)
 {
-   nir_foreach_function(shader, function) {
-      if (function->impl)
-         nir_lower_to_source_mods_impl(function->impl);
+   bool progress = false;
+
+   nir_foreach_function(function, shader) {
+      if (function->impl) {
+         progress |= nir_lower_to_source_mods_impl(function->impl);
+      }
    }
+
+   return progress;
 }

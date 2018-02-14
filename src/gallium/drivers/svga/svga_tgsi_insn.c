@@ -43,7 +43,6 @@ static unsigned
 translate_opcode(uint opcode)
 {
    switch (opcode) {
-   case TGSI_OPCODE_ABS:        return SVGA3DOP_ABS;
    case TGSI_OPCODE_ADD:        return SVGA3DOP_ADD;
    case TGSI_OPCODE_DP2A:       return SVGA3DOP_DP2ADD;
    case TGSI_OPCODE_DP3:        return SVGA3DOP_DP3;
@@ -669,6 +668,7 @@ submit_op4(struct svga_shader_emitter *emit,
     * in one slot at least:
     */
    assert(type1 == SVGA3DREG_SAMPLER);
+   (void) type1;
 
    if (type0 == SVGA3DREG_CONST &&
        ((type3 == SVGA3DREG_CONST && src0.base.num != src3.base.num) ||
@@ -767,7 +767,7 @@ emit_def_const(struct svga_shader_emitter *emit,
    }
 
    if (!emit_instruction(emit, opcode) ||
-       !svga_shader_emit_dwords( emit, def.values, Elements(def.values)))
+       !svga_shader_emit_dwords( emit, def.values, ARRAY_SIZE(def.values)))
       return FALSE;
 
    return TRUE;
@@ -1403,30 +1403,6 @@ emit_ssg(struct svga_shader_emitter *emit,
 
 
 /**
- * Translate/emit TGSI SUB instruction as:
- * ADD DST, SRC0, negate(SRC1)
- */
-static boolean
-emit_sub(struct svga_shader_emitter *emit,
-         const struct tgsi_full_instruction *insn)
-{
-   SVGA3dShaderDestToken dst = translate_dst_register( emit, insn, 0 );
-   struct src_register src0 = translate_src_register(
-      emit, &insn->Src[0] );
-   struct src_register src1 = translate_src_register(
-      emit, &insn->Src[1] );
-
-   src1 = negate(src1);
-
-   if (!submit_op2( emit, inst_token( SVGA3DOP_ADD ), dst,
-                    src0, src1 ))
-      return FALSE;
-
-   return TRUE;
-}
-
-
-/**
  * Translate/emit KILL_IF instruction (kill if any of X,Y,Z,W are negative).
  */
 static boolean
@@ -1826,11 +1802,11 @@ emit_tex_swizzle(struct svga_shader_emitter *emit,
 
    /* build writemasks and srcSwizzle terms */
    for (i = 0; i < 4; i++) {
-      if (swizzleIn[i] == PIPE_SWIZZLE_ZERO) {
+      if (swizzleIn[i] == PIPE_SWIZZLE_0) {
          srcSwizzle[i] = TGSI_SWIZZLE_X + i;
          zeroWritemask |= (1 << i);
       }
-      else if (swizzleIn[i] == PIPE_SWIZZLE_ONE) {
+      else if (swizzleIn[i] == PIPE_SWIZZLE_1) {
          srcSwizzle[i] = TGSI_SWIZZLE_X + i;
          oneWritemask |= (1 << i);
       }
@@ -1897,10 +1873,10 @@ emit_tex(struct svga_shader_emitter *emit,
                       PIPE_TEX_COMPARE_R_TO_TEXTURE);
 
    /* texture swizzle */
-   boolean swizzle = (emit->key.tex[unit].swizzle_r != PIPE_SWIZZLE_RED ||
-                      emit->key.tex[unit].swizzle_g != PIPE_SWIZZLE_GREEN ||
-                      emit->key.tex[unit].swizzle_b != PIPE_SWIZZLE_BLUE ||
-                      emit->key.tex[unit].swizzle_a != PIPE_SWIZZLE_ALPHA);
+   boolean swizzle = (emit->key.tex[unit].swizzle_r != PIPE_SWIZZLE_X ||
+                      emit->key.tex[unit].swizzle_g != PIPE_SWIZZLE_Y ||
+                      emit->key.tex[unit].swizzle_b != PIPE_SWIZZLE_Z ||
+                      emit->key.tex[unit].swizzle_a != PIPE_SWIZZLE_W);
 
    boolean saturate = insn->Instruction.Saturate;
 
@@ -2866,7 +2842,7 @@ emit_call(struct svga_shader_emitter *emit,
          break;
    }
 
-   if (emit->nr_labels == Elements(emit->label))
+   if (emit->nr_labels == ARRAY_SIZE(emit->label))
       return FALSE;
 
    if (i == emit->nr_labels) {
@@ -2989,9 +2965,6 @@ svga_emit_instruction(struct svga_shader_emitter *emit,
    case TGSI_OPCODE_SLE:
       return emit_select_op( emit, PIPE_FUNC_LEQUAL, insn );
 
-   case TGSI_OPCODE_SUB:
-      return emit_sub( emit, insn );
-
    case TGSI_OPCODE_POW:
       return emit_pow( emit, insn );
 
@@ -3027,7 +3000,6 @@ svga_emit_instruction(struct svga_shader_emitter *emit,
       /* These aren't actually used by any of the frontends we care
        * about:
        */
-   case TGSI_OPCODE_CLAMP:
    case TGSI_OPCODE_AND:
    case TGSI_OPCODE_OR:
    case TGSI_OPCODE_I2F:
@@ -3487,12 +3459,12 @@ emit_inverted_texcoords(struct svga_shader_emitter *emit)
 
       assert(emit->inverted_texcoords & (1 << unit));
 
-      assert(unit < Elements(emit->ps_true_texcoord));
+      assert(unit < ARRAY_SIZE(emit->ps_true_texcoord));
 
-      assert(unit < Elements(emit->ps_inverted_texcoord_input));
+      assert(unit < ARRAY_SIZE(emit->ps_inverted_texcoord_input));
 
       assert(emit->ps_inverted_texcoord_input[unit]
-             < Elements(emit->input_map));
+             < ARRAY_SIZE(emit->input_map));
 
       /* inverted = coord * (1, -1, 1, 1) + (0, 1, 0, 0) */
       if (!submit_op3(emit,
@@ -3633,12 +3605,12 @@ needs_to_create_common_immediate(const struct svga_shader_emitter *emit)
       if (emit->inverted_texcoords)
          return TRUE;
 
-      /* look for any PIPE_SWIZZLE_ZERO/ONE terms */
+      /* look for any PIPE_SWIZZLE_0/ONE terms */
       for (i = 0; i < emit->key.num_textures; i++) {
-         if (emit->key.tex[i].swizzle_r > PIPE_SWIZZLE_ALPHA ||
-             emit->key.tex[i].swizzle_g > PIPE_SWIZZLE_ALPHA ||
-             emit->key.tex[i].swizzle_b > PIPE_SWIZZLE_ALPHA ||
-             emit->key.tex[i].swizzle_a > PIPE_SWIZZLE_ALPHA)
+         if (emit->key.tex[i].swizzle_r > PIPE_SWIZZLE_W ||
+             emit->key.tex[i].swizzle_g > PIPE_SWIZZLE_W ||
+             emit->key.tex[i].swizzle_b > PIPE_SWIZZLE_W ||
+             emit->key.tex[i].swizzle_a > PIPE_SWIZZLE_W)
             return TRUE;
       }
 
@@ -3797,6 +3769,9 @@ svga_shader_emit_helpers(struct svga_shader_emitter *emit)
    }
 
    if (emit->unit == PIPE_SHADER_FRAGMENT) {
+      if (!svga_shader_emit_samplers_decl( emit ))
+         return FALSE;
+
       if (!emit_ps_preamble( emit ))
          return FALSE;
 
@@ -3849,7 +3824,7 @@ svga_shader_emit_instructions(struct svga_shader_emitter *emit,
 
       if (new_tokens) {
          /* Setup texture state for stipple */
-         emit->key.tex[unit].texture_target = PIPE_TEXTURE_2D;
+         emit->sampler_target[unit] = TGSI_TEXTURE_2D;
          emit->key.tex[unit].swizzle_r = TGSI_SWIZZLE_X;
          emit->key.tex[unit].swizzle_g = TGSI_SWIZZLE_Y;
          emit->key.tex[unit].swizzle_b = TGSI_SWIZZLE_Z;

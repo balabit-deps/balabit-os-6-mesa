@@ -116,7 +116,7 @@ compute_vertex_info(struct llvmpipe_context *llvmpipe)
          /*
           * Note that we'd actually want to skip position (as we won't use
           * the attribute in the fs) but can't. The reason is that we don't
-          * actually have a input/output map for setup (even though it looks
+          * actually have an input/output map for setup (even though it looks
           * like we do...). Could adjust for this though even without a map
           * (in llvmpipe_create_fs_state()).
           */
@@ -194,6 +194,7 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
    /* This needs LP_NEW_RASTERIZER because of draw_prepare_shader_outputs(). */
    if (llvmpipe->dirty & (LP_NEW_RASTERIZER |
                           LP_NEW_FS |
+                          LP_NEW_GS |
                           LP_NEW_VS))
       compute_vertex_info(llvmpipe);
 
@@ -235,9 +236,9 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
                                       llvmpipe->stencil_ref.ref_value);
    }
 
-   if (llvmpipe->dirty & LP_NEW_CONSTANTS)
+   if (llvmpipe->dirty & LP_NEW_FS_CONSTANTS)
       lp_setup_set_fs_constants(llvmpipe->setup,
-                                Elements(llvmpipe->constants[PIPE_SHADER_FRAGMENT]),
+                                ARRAY_SIZE(llvmpipe->constants[PIPE_SHADER_FRAGMENT]),
                                 llvmpipe->constants[PIPE_SHADER_FRAGMENT]);
 
    if (llvmpipe->dirty & (LP_NEW_SAMPLER_VIEW))

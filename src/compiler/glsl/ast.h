@@ -22,7 +22,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef AST_H
 #define AST_H
 
@@ -49,7 +48,7 @@ struct YYLTYPE;
  */
 class ast_node {
 public:
-   DECLARE_RALLOC_CXX_OPERATORS(ast_node);
+   DECLARE_LINEAR_ZALLOC_CXX_OPERATORS(ast_node);
 
    /**
     * Print an AST node in something approximating the original GLSL code
@@ -126,6 +125,8 @@ public:
 
    exec_node link;
 
+   virtual void set_is_lhs(bool);
+
 protected:
    /**
     * The only constructor is protected so that only derived class objects can
@@ -193,9 +194,20 @@ enum ast_operators {
    ast_float_constant,
    ast_bool_constant,
    ast_double_constant,
+   ast_int64_constant,
+   ast_uint64_constant,
 
    ast_sequence,
    ast_aggregate
+
+   /**
+    * Number of possible operators for an ast_expression
+    *
+    * This is done as a define instead of as an additional value in the enum so
+    * that the compiler won't generate spurious messages like "warning:
+    * enumeration value ‘ast_num_operators’ not handled in switch"
+    */
+   #define AST_NUM_OPERATORS (ast_aggregate + 1)
 };
 
 /**
@@ -214,6 +226,7 @@ public:
       subexpressions[2] = NULL;
       primary_expression.identifier = identifier;
       this->non_lvalue_description = NULL;
+      this->is_lhs = false;
    }
 
    static const char *operator_string(enum ast_operators op);
@@ -243,6 +256,8 @@ public:
       unsigned uint_constant;
       int bool_constant;
       double double_constant;
+      uint64_t uint64_constant;
+      int64_t int64_constant;
    } primary_expression;
 
 
@@ -263,6 +278,11 @@ public:
     * This pointer may be \c NULL.
     */
    const char *non_lvalue_description;
+
+   void set_is_lhs(bool new_value);
+
+private:
+   bool is_lhs;
 };
 
 class ast_expression_bin : public ast_expression {
@@ -338,8 +358,8 @@ public:
 
    bool is_single_dimension() const
    {
-      return this->array_dimensions.tail_pred->prev != NULL &&
-             this->array_dimensions.tail_pred->prev->is_head_sentinel();
+      return this->array_dimensions.get_tail_raw()->prev != NULL &&
+             this->array_dimensions.get_tail_raw()->prev->is_head_sentinel();
    }
 
    virtual void print(void) const;
@@ -407,15 +427,6 @@ public:
                               struct _mesa_glsl_parse_state *state);
 };
 
-/**
- * Number of possible operators for an ast_expression
- *
- * This is done as a define instead of as an additional value in the enum so
- * that the compiler won't generate spurious messages like "warning:
- * enumeration value ‘ast_num_operators’ not handled in switch"
- */
-#define AST_NUM_OPERATORS (ast_sequence + 1)
-
 
 class ast_compound_statement : public ast_node {
 public:
@@ -451,6 +462,14 @@ enum {
    ast_precision_low
 };
 
+enum {
+   ast_depth_none = 0, /**< Absence of depth qualifier. */
+   ast_depth_any,
+   ast_depth_greater,
+   ast_depth_less,
+   ast_depth_unchanged
+};
+
 struct ast_type_qualifier {
    DECLARE_RALLOC_CXX_OPERATORS(ast_type_qualifier);
 
@@ -479,6 +498,12 @@ struct ast_type_qualifier {
 	 unsigned pixel_center_integer:1;
 	 /*@}*/
 
+         /**
+          * Flag set if GL_ARB_enhanced_layouts "align" layout qualifier is
+          * used.
+          */
+         unsigned explicit_align:1;
+
 	 /**
 	  * Flag set if GL_ARB_explicit_attrib_location "location" layout
 	  * qualifier is used.
@@ -489,6 +514,12 @@ struct ast_type_qualifier {
 	  * qualifier is used.
 	  */
 	 unsigned explicit_index:1;
+
+	 /**
+	  * Flag set if GL_ARB_enhanced_layouts "component" layout
+	  * qualifier is used.
+	  */
+	 unsigned explicit_component:1;
 
          /**
           * Flag set if GL_ARB_shading_language_420pack "binding" layout
@@ -504,10 +535,7 @@ struct ast_type_qualifier {
 
          /** \name Layout qualifiers for GL_AMD_conservative_depth */
          /** \{ */
-         unsigned depth_any:1;
-         unsigned depth_greater:1;
-         unsigned depth_less:1;
-         unsigned depth_unchanged:1;
+         unsigned depth_type:1;
          /** \} */
 
 	 /** \name Layout qualifiers for GL_ARB_uniform_buffer_object */
@@ -532,6 +560,11 @@ struct ast_type_qualifier {
           */
          unsigned local_size:3;
 
+	 /** \name Layout qualifiers for ARB_compute_variable_group_size. */
+	 /** \{ */
+	 unsigned local_size_variable:1;
+	 /** \} */
+
 	 /** \name Layout and memory qualifiers for ARB_shader_image_load_store. */
 	 /** \{ */
 	 unsigned early_fragment_tests:1;
@@ -550,6 +583,15 @@ struct ast_type_qualifier {
          unsigned explicit_stream:1; /**< stream value assigned explicitly by shader code */
          /** \} */
 
+         /** \name Layout qualifiers for GL_ARB_enhanced_layouts */
+         /** \{ */
+         unsigned explicit_xfb_offset:1; /**< xfb_offset value assigned explicitly by shader code */
+         unsigned xfb_buffer:1; /**< Has xfb_buffer value assigned  */
+         unsigned explicit_xfb_buffer:1; /**< xfb_buffer value assigned explicitly by shader code */
+         unsigned xfb_stride:1; /**< Is xfb_stride value yet to be merged with global values  */
+         unsigned explicit_xfb_stride:1; /**< xfb_stride value assigned explicitly by shader code */
+         /** \} */
+
 	 /** \name Layout qualifiers for GL_ARB_tessellation_shader */
 	 /** \{ */
 	 /* tess eval input layout */
@@ -564,8 +606,30 @@ struct ast_type_qualifier {
          /** \name Qualifiers for GL_ARB_shader_subroutine */
 	 /** \{ */
          unsigned subroutine:1;  /**< Is this marked 'subroutine' */
-         unsigned subroutine_def:1; /**< Is this marked 'subroutine' with a list of types */
 	 /** \} */
+
+         /** \name Qualifiers for GL_KHR_blend_equation_advanced */
+         /** \{ */
+         unsigned blend_support:1; /**< Are there any blend_support_ qualifiers */
+         /** \} */
+
+         /**
+          * Flag set if GL_ARB_post_depth_coverage layout qualifier is used.
+          */
+         unsigned post_depth_coverage:1;
+         /**
+          * Flag set if GL_INTEL_conservartive_rasterization layout qualifier
+          * is used.
+          */
+         unsigned inner_coverage:1;
+
+         /** \name Layout qualifiers for GL_ARB_bindless_texture */
+         /** \{ */
+         unsigned bindless_sampler:1;
+         unsigned bindless_image:1;
+         unsigned bound_sampler:1;
+         unsigned bound_image:1;
+         /** \} */
       }
       /** \brief Set of flags, accessed by name. */
       q;
@@ -576,6 +640,14 @@ struct ast_type_qualifier {
 
    /** Precision of the type (highp/medium/lowp). */
    unsigned precision:2;
+
+   /** Type of layout qualifiers for GL_AMD_conservative_depth. */
+   unsigned depth_type:3;
+
+   /**
+    * Alignment specified via GL_ARB_enhanced_layouts "align" layout qualifier
+    */
+   ast_expression *align;
 
    /** Geometry shader invocations for GL_ARB_gpu_shader5. */
    ast_layout_expression *invocations;
@@ -595,11 +667,28 @@ struct ast_type_qualifier {
     */
    ast_expression *index;
 
+   /**
+    * Component specified via GL_ARB_enhaced_layouts
+    *
+    * \note
+    * This field is only valid if \c explicit_component is set.
+    */
+   ast_expression *component;
+
    /** Maximum output vertices in GLSL 1.50 geometry shaders. */
    ast_layout_expression *max_vertices;
 
    /** Stream in GLSL 1.50 geometry shaders. */
    ast_expression *stream;
+
+   /** xfb_buffer specified via the GL_ARB_enhanced_layouts keyword. */
+   ast_expression *xfb_buffer;
+
+   /** xfb_stride specified via the GL_ARB_enhanced_layouts keyword. */
+   ast_expression *xfb_stride;
+
+   /** global xfb_stride values for each buffer */
+   ast_layout_expression *out_xfb_stride[MAX_FEEDBACK_BUFFERS];
 
    /**
     * Input or output primitive type in GLSL 1.50 geometry shaders
@@ -616,8 +705,9 @@ struct ast_type_qualifier {
    ast_expression *binding;
 
    /**
-    * Offset specified via GL_ARB_shader_atomic_counter's "offset"
-    * keyword.
+    * Offset specified via GL_ARB_shader_atomic_counter's or
+    * GL_ARB_enhanced_layouts "offset" keyword, or by GL_ARB_enhanced_layouts
+    * "xfb_offset" keyword.
     *
     * \note
     * This field is only valid if \c explicit_offset is set.
@@ -632,7 +722,7 @@ struct ast_type_qualifier {
    ast_layout_expression *local_size[3];
 
    /** Tessellation evaluation shader: vertex spacing (equal, fractional even/odd) */
-   GLenum vertex_spacing;
+   enum gl_tess_spacing vertex_spacing;
 
    /** Tessellation evaluation shader: vertex ordering (CW or CCW) */
    GLenum ordering;
@@ -662,9 +752,6 @@ struct ast_type_qualifier {
     */
    glsl_base_type image_base_type;
 
-   /** Flag to know if this represents a default value for a qualifier */
-   bool is_default_qualifier;
-
    /**
     * Return true if and only if an interpolation qualifier is present.
     */
@@ -685,20 +772,58 @@ struct ast_type_qualifier {
     */
    bool has_auxiliary_storage() const;
 
+   /**
+    * Return true if and only if a memory qualifier is present.
+    */
+   bool has_memory() const;
+
+   /**
+    * Return true if the qualifier is a subroutine declaration.
+    */
+   bool is_subroutine_decl() const;
+
    bool merge_qualifier(YYLTYPE *loc,
 			_mesa_glsl_parse_state *state,
                         const ast_type_qualifier &q,
-                        bool is_single_layout_merge);
+                        bool is_single_layout_merge,
+                        bool is_multiple_layouts_merge = false);
 
-   bool merge_out_qualifier(YYLTYPE *loc,
-                           _mesa_glsl_parse_state *state,
-                           const ast_type_qualifier &q,
-                           ast_node* &node, bool create_node);
+   /**
+    * Validate current qualifier against the global out one.
+    */
+   bool validate_out_qualifier(YYLTYPE *loc,
+                               _mesa_glsl_parse_state *state);
 
-   bool merge_in_qualifier(YYLTYPE *loc,
-                           _mesa_glsl_parse_state *state,
-                           const ast_type_qualifier &q,
-                           ast_node* &node, bool create_node);
+   /**
+    * Merge current qualifier into the global out one.
+    */
+   bool merge_into_out_qualifier(YYLTYPE *loc,
+                                 _mesa_glsl_parse_state *state,
+                                 ast_node* &node);
+
+   /**
+    * Validate current qualifier against the global in one.
+    */
+   bool validate_in_qualifier(YYLTYPE *loc,
+                              _mesa_glsl_parse_state *state);
+
+   /**
+    * Merge current qualifier into the global in one.
+    */
+   bool merge_into_in_qualifier(YYLTYPE *loc,
+                                _mesa_glsl_parse_state *state,
+                                ast_node* &node);
+
+   /**
+    * Push pending layout qualifiers to the global values.
+    */
+   bool push_to_global(YYLTYPE *loc,
+                       _mesa_glsl_parse_state *state);
+
+   bool validate_flags(YYLTYPE *loc,
+                       _mesa_glsl_parse_state *state,
+                       const ast_type_qualifier &allowed_flags,
+                       const char *message, const char *name);
 
    ast_subroutine_list *subroutine_list;
 };
@@ -707,7 +832,7 @@ class ast_declarator_list;
 
 class ast_struct_specifier : public ast_node {
 public:
-   ast_struct_specifier(const char *identifier,
+   ast_struct_specifier(void *lin_ctx, const char *identifier,
 			ast_declarator_list *declarator_list);
    virtual void print(void) const;
 
@@ -719,6 +844,7 @@ public:
    /* List of ast_declarator_list * */
    exec_list declarations;
    bool is_declaration;
+   const glsl_type *type;
 };
 
 
@@ -1061,10 +1187,9 @@ public:
 
 class ast_interface_block : public ast_node {
 public:
-   ast_interface_block(ast_type_qualifier layout,
-                       const char *instance_name,
+   ast_interface_block(const char *instance_name,
                        ast_array_specifier *array_specifier)
-   : layout(layout), block_name(NULL), instance_name(instance_name),
+   : block_name(NULL), instance_name(instance_name),
      array_specifier(array_specifier)
    {
    }
@@ -1072,6 +1197,7 @@ public:
    virtual ir_rvalue *hir(exec_list *instructions,
 			  struct _mesa_glsl_parse_state *state);
 
+   ast_type_qualifier default_layout;
    ast_type_qualifier layout;
    const char *block_name;
 
@@ -1189,4 +1315,10 @@ extern void _mesa_ast_process_interface_block(YYLTYPE *locp,
                                               ast_interface_block *const block,
                                               const struct ast_type_qualifier &q);
 
+extern bool
+process_qualifier_constant(struct _mesa_glsl_parse_state *state,
+                           YYLTYPE *loc,
+                           const char *qual_indentifier,
+                           ast_expression *const_expression,
+                           unsigned *value);
 #endif /* AST_H */

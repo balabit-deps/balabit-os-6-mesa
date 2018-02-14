@@ -32,6 +32,7 @@
  */
 
 
+#include "util/u_bitcast.h"
 #include "util/u_memory.h"
 #include "util/u_math.h"
 
@@ -90,7 +91,7 @@ draw_viewport_index(struct draw_context *draw,
       unsigned viewport_index_output =
          draw_current_shader_viewport_index_output(draw);
       unsigned viewport_index =
-         *((unsigned*)leading_vertex->data[viewport_index_output]);
+         u_bitcast_f2u(leading_vertex->data[viewport_index_output][0]);
       return draw_clamp_viewport_idx(viewport_index);
    } else {
       return 0;
@@ -368,7 +369,7 @@ static inline float getclipdist(const struct clip_stage *clipper,
       int _idx = plane_idx - 6;
       int cdi = _idx >= 4;
       int vidx = cdi ? _idx - 4 : _idx;
-      dp = vert->data[draw_current_shader_clipdistance_output(clipper->stage.draw, cdi)][vidx];
+      dp = vert->data[draw_current_shader_ccdistance_output(clipper->stage.draw, cdi)][vidx];
    } else {
       /*
        * legacy user clip planes or gl_ClipVertex
@@ -770,8 +771,9 @@ find_interp(const struct draw_fragment_shader *fs, int *indexed_interp,
    int interp;
    /* If it's gl_{Front,Back}{,Secondary}Color, pick up the mode
     * from the array we've filled before. */
-   if (semantic_name == TGSI_SEMANTIC_COLOR ||
-       semantic_name == TGSI_SEMANTIC_BCOLOR) {
+   if ((semantic_name == TGSI_SEMANTIC_COLOR ||
+        semantic_name == TGSI_SEMANTIC_BCOLOR) &&
+       semantic_index < 2) {
       interp = indexed_interp[semantic_index];
    } else if (semantic_name == TGSI_SEMANTIC_POSITION ||
               semantic_name == TGSI_SEMANTIC_CLIPVERTEX) {
@@ -850,7 +852,8 @@ clip_init_state(struct draw_stage *stage)
 
    if (fs) {
       for (i = 0; i < fs->info.num_inputs; i++) {
-         if (fs->info.input_semantic_name[i] == TGSI_SEMANTIC_COLOR) {
+         if (fs->info.input_semantic_name[i] == TGSI_SEMANTIC_COLOR &&
+             fs->info.input_semantic_index[i] < 2) {
             if (fs->info.input_interpolate[i] != TGSI_INTERPOLATE_COLOR)
                indexed_interp[fs->info.input_semantic_index[i]] = fs->info.input_interpolate[i];
          }
@@ -879,6 +882,15 @@ clip_init_state(struct draw_stage *stage)
       case TGSI_INTERPOLATE_PERSPECTIVE:
          clipper->perspect_attribs[clipper->num_perspect_attribs] = i;
          clipper->num_perspect_attribs++;
+         break;
+      case TGSI_INTERPOLATE_COLOR:
+         if (draw->rasterizer->flatshade) {
+            clipper->const_attribs[clipper->num_const_attribs] = i;
+            clipper->num_const_attribs++;
+         } else {
+            clipper->perspect_attribs[clipper->num_perspect_attribs] = i;
+            clipper->num_perspect_attribs++;
+         }
          break;
       default:
          assert(interp == -1);

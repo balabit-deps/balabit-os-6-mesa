@@ -48,31 +48,51 @@
  * This is a bit different than legal_teximage_target() when it comes
  * to cube maps.
  */
-static GLboolean
-legal_texobj_target(struct gl_context *ctx, GLuint dims, GLenum target)
+static bool
+legal_texobj_target(const struct gl_context *ctx, GLuint dims, GLenum target)
 {
-   if (_mesa_is_gles3(ctx)
-       && target != GL_TEXTURE_2D
-       && target != GL_TEXTURE_CUBE_MAP
-       && target != GL_TEXTURE_3D
-       && target != GL_TEXTURE_2D_ARRAY)
-      return GL_FALSE;
+   if (dims < 1 || dims > 3) {
+      _mesa_problem(ctx, "invalid dims=%u in legal_texobj_target()", dims);
+      return false;
+   }
+
+   switch (dims) {
+   case 2:
+      switch (target) {
+      case GL_TEXTURE_2D:
+         return true;
+      case GL_TEXTURE_CUBE_MAP:
+         return ctx->Extensions.ARB_texture_cube_map;
+      }
+      break;
+   case 3:
+      switch (target) {
+      case GL_TEXTURE_3D:
+         return true;
+      case GL_TEXTURE_2D_ARRAY:
+         return ctx->Extensions.EXT_texture_array;
+      case GL_TEXTURE_CUBE_MAP_ARRAY:
+         return _mesa_has_texture_cube_map_array(ctx);
+      }
+      break;
+   }
+
+   if (!_mesa_is_desktop_gl(ctx))
+      return false;
 
    switch (dims) {
    case 1:
       switch (target) {
       case GL_TEXTURE_1D:
       case GL_PROXY_TEXTURE_1D:
-         return GL_TRUE;
+         return true;
       default:
-         return GL_FALSE;
+         return false;
       }
    case 2:
       switch (target) {
-      case GL_TEXTURE_2D:
       case GL_PROXY_TEXTURE_2D:
-         return GL_TRUE;
-      case GL_TEXTURE_CUBE_MAP:
+         return true;
       case GL_PROXY_TEXTURE_CUBE_MAP:
          return ctx->Extensions.ARB_texture_cube_map;
       case GL_TEXTURE_RECTANGLE:
@@ -82,25 +102,21 @@ legal_texobj_target(struct gl_context *ctx, GLuint dims, GLenum target)
       case GL_PROXY_TEXTURE_1D_ARRAY:
          return ctx->Extensions.EXT_texture_array;
       default:
-         return GL_FALSE;
+         return false;
       }
    case 3:
       switch (target) {
-      case GL_TEXTURE_3D:
       case GL_PROXY_TEXTURE_3D:
-         return GL_TRUE;
-      case GL_TEXTURE_2D_ARRAY:
+         return true;
       case GL_PROXY_TEXTURE_2D_ARRAY:
          return ctx->Extensions.EXT_texture_array;
-      case GL_TEXTURE_CUBE_MAP_ARRAY:
       case GL_PROXY_TEXTURE_CUBE_MAP_ARRAY:
          return ctx->Extensions.ARB_texture_cube_map_array;
       default:
-         return GL_FALSE;
+         return false;
       }
    default:
-      _mesa_problem(ctx, "invalid dims=%u in legal_texobj_target()", dims);
-      return GL_FALSE;
+      unreachable("impossible dimensions");
    }
 }
 
@@ -179,9 +195,7 @@ clear_texture_fields(struct gl_context *ctx,
             return;
 	 }
 
-         _mesa_init_teximage_fields(ctx, texImage,
-                                    0, 0, 0, 0, /* w, h, d, border */
-                                    GL_NONE, MESA_FORMAT_NONE);
+         _mesa_clear_texture_image(ctx, texImage);
       }
    }
 }
@@ -358,11 +372,11 @@ tex_storage_error_check(struct gl_context *ctx,
    }
 
    /* additional checks for depth textures */
-   if (!_mesa_legal_texture_base_format_for_target(ctx, target, internalformat,
-                                                   dims, dsa ?
-                                                   "glTextureStorage" :
-                                                   "glTexStorage"))
+   if (!_mesa_legal_texture_base_format_for_target(ctx, target, internalformat)) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "glTex%sStorage%uD(bad target for texture)",
+                  suffix, dims);
       return GL_TRUE;
+   }
 
    return GL_FALSE;
 }
@@ -372,12 +386,12 @@ tex_storage_error_check(struct gl_context *ctx,
  * Helper that does the storage allocation for _mesa_TexStorage1/2/3D()
  * and _mesa_TextureStorage1/2/3D().
  */
-void
-_mesa_texture_storage(struct gl_context *ctx, GLuint dims,
-                      struct gl_texture_object *texObj,
-                      GLenum target, GLsizei levels,
-                      GLenum internalformat, GLsizei width,
-                      GLsizei height, GLsizei depth, bool dsa)
+static void
+texture_storage(struct gl_context *ctx, GLuint dims,
+                struct gl_texture_object *texObj,
+                GLenum target, GLsizei levels,
+                GLenum internalformat, GLsizei width,
+                GLsizei height, GLsizei depth, bool dsa)
 {
    GLboolean sizeOK, dimensionsOK;
    mesa_format texFormat;
@@ -392,14 +406,13 @@ _mesa_texture_storage(struct gl_context *ctx, GLuint dims,
 
    texFormat = _mesa_choose_texture_format(ctx, texObj, target, 0,
                                            internalformat, GL_NONE, GL_NONE);
-   assert(texFormat != MESA_FORMAT_NONE);
 
    /* check that width, height, depth are legal for the mipmap level */
    dimensionsOK = _mesa_legal_texture_dimensions(ctx, target, 0,
                                                   width, height, depth, 0);
 
-   sizeOK = ctx->Driver.TestProxyTexImage(ctx, target, 0, texFormat,
-                                          width, height, depth, 0);
+   sizeOK = ctx->Driver.TestProxyTexImage(ctx, target, levels, 0, texFormat,
+                                          1, width, height, depth);
 
    if (_mesa_is_proxy_texture(target)) {
       if (dimensionsOK && sizeOK) {
@@ -461,24 +474,23 @@ _mesa_texture_storage(struct gl_context *ctx, GLuint dims,
  */
 static void
 texstorage(GLuint dims, GLenum target, GLsizei levels, GLenum internalformat,
-           GLsizei width, GLsizei height, GLsizei depth)
+           GLsizei width, GLsizei height, GLsizei depth, const char *caller)
 {
    struct gl_texture_object *texObj;
    GET_CURRENT_CONTEXT(ctx);
 
-   /* Check target.  This is done here so that _mesa_texture_storage
+   /* Check target.  This is done here so that texture_storage
     * can receive unsized formats.
     */
    if (!legal_texobj_target(ctx, dims, target)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
-                  "glTexStorage%uD(illegal target=%s)",
-                  dims, _mesa_enum_to_string(target));
+                  "%s(illegal target=%s)",
+                  caller, _mesa_enum_to_string(target));
       return;
    }
 
    if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
-      _mesa_debug(ctx, "glTexStorage%uD %s %d %s %d %d %d\n",
-                  dims,
+      _mesa_debug(ctx, "%s %s %d %s %d %d %d\n", caller,
                   _mesa_enum_to_string(target), levels,
                   _mesa_enum_to_string(internalformat),
                   width, height, depth);
@@ -486,7 +498,7 @@ texstorage(GLuint dims, GLenum target, GLsizei levels, GLenum internalformat,
    /* Check the format to make sure it is sized. */
    if (!_mesa_is_legal_tex_storage_format(ctx, internalformat)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
-                  "glTexStorage%uD(internalformat = %s)", dims,
+                  "%s(internalformat = %s)", caller,
                   _mesa_enum_to_string(internalformat));
       return;
    }
@@ -495,8 +507,8 @@ texstorage(GLuint dims, GLenum target, GLsizei levels, GLenum internalformat,
    if (!texObj)
       return;
 
-   _mesa_texture_storage(ctx, dims, texObj, target, levels,
-                         internalformat, width, height, depth, false);
+   texture_storage(ctx, dims, texObj, target, levels,
+                   internalformat, width, height, depth, false);
 }
 
 
@@ -506,45 +518,41 @@ texstorage(GLuint dims, GLenum target, GLsizei levels, GLenum internalformat,
 static void
 texturestorage(GLuint dims, GLuint texture, GLsizei levels,
                GLenum internalformat, GLsizei width, GLsizei height,
-               GLsizei depth)
+               GLsizei depth, const char *caller)
 {
    struct gl_texture_object *texObj;
    GET_CURRENT_CONTEXT(ctx);
 
    if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
-      _mesa_debug(ctx, "glTextureStorage%uD %d %d %s %d %d %d\n",
-                  dims, texture, levels,
+      _mesa_debug(ctx, "%s %d %d %s %d %d %d\n",
+                  caller, texture, levels,
                   _mesa_enum_to_string(internalformat),
                   width, height, depth);
 
    /* Check the format to make sure it is sized. */
    if (!_mesa_is_legal_tex_storage_format(ctx, internalformat)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
-                  "glTextureStorage%uD(internalformat = %s)", dims,
+                  "%s(internalformat = %s)", caller,
                   _mesa_enum_to_string(internalformat));
       return;
    }
 
-   /* Get the texture object by Name. */
-   texObj = _mesa_lookup_texture(ctx, texture);
-   if (!texObj) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "glTextureStorage%uD(texture = %d)", dims, texture);
+   texObj = _mesa_lookup_texture_err(ctx, texture, caller);
+   if (!texObj)
       return;
-   }
 
-   /* Check target.  This is done here so that _mesa_texture_storage
+   /* Check target.  This is done here so that texture_storage
     * can receive unsized formats.
     */
    if (!legal_texobj_target(ctx, dims, texObj->Target)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
-                  "glTextureStorage%uD(illegal target=%s)",
-                  dims, _mesa_enum_to_string(texObj->Target));
+                  "%s(illegal target=%s)", caller,
+                  _mesa_enum_to_string(texObj->Target));
       return;
    }
 
-   _mesa_texture_storage(ctx, dims, texObj, texObj->Target,
-                         levels, internalformat, width, height, depth, true);
+   texture_storage(ctx, dims, texObj, texObj->Target,
+                   levels, internalformat, width, height, depth, true);
 }
 
 
@@ -552,7 +560,8 @@ void GLAPIENTRY
 _mesa_TexStorage1D(GLenum target, GLsizei levels, GLenum internalformat,
                    GLsizei width)
 {
-   texstorage(1, target, levels, internalformat, width, 1, 1);
+   texstorage(1, target, levels, internalformat, width, 1, 1,
+              "glTexStorage1D");
 }
 
 
@@ -560,7 +569,8 @@ void GLAPIENTRY
 _mesa_TexStorage2D(GLenum target, GLsizei levels, GLenum internalformat,
                    GLsizei width, GLsizei height)
 {
-   texstorage(2, target, levels, internalformat, width, height, 1);
+   texstorage(2, target, levels, internalformat, width, height, 1,
+              "glTexStorage2D");
 }
 
 
@@ -568,7 +578,8 @@ void GLAPIENTRY
 _mesa_TexStorage3D(GLenum target, GLsizei levels, GLenum internalformat,
                    GLsizei width, GLsizei height, GLsizei depth)
 {
-   texstorage(3, target, levels, internalformat, width, height, depth);
+   texstorage(3, target, levels, internalformat, width, height, depth,
+              "glTexStorage3D");
 }
 
 
@@ -576,7 +587,8 @@ void GLAPIENTRY
 _mesa_TextureStorage1D(GLuint texture, GLsizei levels, GLenum internalformat,
                        GLsizei width)
 {
-   texturestorage(1, texture, levels, internalformat, width, 1, 1);
+   texturestorage(1, texture, levels, internalformat, width, 1, 1,
+                  "glTextureStorage1D");
 }
 
 
@@ -585,7 +597,8 @@ _mesa_TextureStorage2D(GLuint texture, GLsizei levels,
                        GLenum internalformat,
                        GLsizei width, GLsizei height)
 {
-   texturestorage(2, texture, levels, internalformat, width, height, 1);
+   texturestorage(2, texture, levels, internalformat, width, height, 1,
+                  "glTextureStorage2D");
 }
 
 
@@ -593,7 +606,8 @@ void GLAPIENTRY
 _mesa_TextureStorage3D(GLuint texture, GLsizei levels, GLenum internalformat,
                        GLsizei width, GLsizei height, GLsizei depth)
 {
-   texturestorage(3, texture, levels, internalformat, width, height, depth);
+   texturestorage(3, texture, levels, internalformat, width, height, depth,
+                  "glTextureStorage3D");
 }
 
 

@@ -36,6 +36,67 @@
 namespace {
 
 /**
+ * Return true if interface members mismatch and its not allowed by GLSL.
+ */
+static bool
+interstage_member_mismatch(struct gl_shader_program *prog,
+                           const glsl_type *c, const glsl_type *p) {
+
+   if (c->length != p->length)
+      return true;
+
+   for (unsigned i = 0; i < c->length; i++) {
+      if (c->fields.structure[i].type != p->fields.structure[i].type)
+         return true;
+      if (strcmp(c->fields.structure[i].name,
+                 p->fields.structure[i].name) != 0)
+         return true;
+      if (c->fields.structure[i].location !=
+          p->fields.structure[i].location)
+         return true;
+      if (c->fields.structure[i].patch !=
+          p->fields.structure[i].patch)
+         return true;
+
+      /* From Section 4.5 (Interpolation Qualifiers) of the GLSL 4.40 spec:
+       *
+       *    "It is a link-time error if, within the same stage, the
+       *    interpolation qualifiers of variables of the same name do not
+       *    match."
+       */
+      if (prog->IsES || prog->data->Version < 440)
+         if (c->fields.structure[i].interpolation !=
+             p->fields.structure[i].interpolation)
+            return true;
+
+      /* From Section 4.3.4 (Input Variables) of the GLSL ES 3.0 spec:
+       *
+       *    "The output of the vertex shader and the input of the fragment
+       *    shader form an interface.  For this interface, vertex shader
+       *    output variables and fragment shader input variables of the same
+       *    name must match in type and qualification (other than precision
+       *    and out matching to in).
+       *
+       * The table in Section 9.2.1 Linked Shaders of the GLSL ES 3.1 spec
+       * says that centroid no longer needs to match for varyings.
+       *
+       * The table in Section 9.2.1 Linked Shaders of the GLSL ES 3.2 spec
+       * says that sample need not match for varyings.
+       */
+      if (!prog->IsES || prog->data->Version < 310)
+         if (c->fields.structure[i].centroid !=
+             p->fields.structure[i].centroid)
+            return true;
+      if (!prog->IsES)
+         if (c->fields.structure[i].sample !=
+             p->fields.structure[i].sample)
+            return true;
+   }
+
+   return false;
+}
+
+/**
  * Check if two interfaces match, according to intrastage interface matching
  * rules.  If they do, and the first interface uses an unsized array, it will
  * be updated to reflect the array size declared in the second interface.
@@ -51,8 +112,11 @@ intrastage_match(ir_variable *a,
        * don't force their types to match.  They might mismatch due to the two
        * shaders using different GLSL versions, and that's ok.
        */
-      if (a->data.how_declared != ir_var_declared_implicitly ||
-          b->data.how_declared != ir_var_declared_implicitly)
+      if ((a->data.how_declared != ir_var_declared_implicitly ||
+           b->data.how_declared != ir_var_declared_implicitly) &&
+          (!prog->IsES || prog->data->Version != 310 ||
+           interstage_member_mismatch(prog, a->get_interface_type(),
+                                      b->get_interface_type())))
          return false;
    }
 
@@ -81,7 +145,6 @@ intrastage_match(ir_variable *a,
    return true;
 }
 
-
 /**
  * Check if two interfaces match, according to interstage (in/out) interface
  * matching rules.
@@ -90,25 +153,25 @@ intrastage_match(ir_variable *a,
  * an array and the producer interface is required to be a non-array.
  * This is used for tessellation control and geometry shader consumers.
  */
-bool
-interstage_match(ir_variable *producer,
-                 ir_variable *consumer,
-                 bool extra_array_level)
+static bool
+interstage_match(struct gl_shader_program *prog, ir_variable *producer,
+                 ir_variable *consumer, bool extra_array_level)
 {
-   /* Unsized arrays should not occur during interstage linking.  They
-    * should have all been assigned a size by link_intrastage_shaders.
-    */
-   assert(!consumer->type->is_unsized_array());
-   assert(!producer->type->is_unsized_array());
-
    /* Types must match. */
    if (consumer->get_interface_type() != producer->get_interface_type()) {
       /* Exception: if both the interface blocks are implicitly declared,
        * don't force their types to match.  They might mismatch due to the two
        * shaders using different GLSL versions, and that's ok.
+       *
+       * Also we store some member information such as interpolation in
+       * glsl_type that doesn't always have to match across shader stages.
+       * Therefore we make a pass over the members glsl_struct_field to make
+       * sure we don't reject shaders where fields don't need to match.
        */
-      if (consumer->data.how_declared != ir_var_declared_implicitly ||
-          producer->data.how_declared != ir_var_declared_implicitly)
+      if ((consumer->data.how_declared != ir_var_declared_implicitly ||
+           producer->data.how_declared != ir_var_declared_implicitly) &&
+          interstage_member_mismatch(prog, consumer->get_interface_type(),
+                                     producer->get_interface_type()))
          return false;
    }
 
@@ -176,7 +239,8 @@ public:
          return entry ? (ir_variable *) entry->data : NULL;
       } else {
          const struct hash_entry *entry =
-            _mesa_hash_table_search(ht, var->get_interface_type()->name);
+            _mesa_hash_table_search(ht,
+               var->get_interface_type()->without_array()->name);
          return entry ? (ir_variable *) entry->data : NULL;
       }
    }
@@ -197,7 +261,8 @@ public:
          snprintf(location_str, 11, "%d", var->data.location);
          _mesa_hash_table_insert(ht, ralloc_strdup(mem_ctx, location_str), var);
       } else {
-         _mesa_hash_table_insert(ht, var->get_interface_type()->name, var);
+         _mesa_hash_table_insert(ht,
+            var->get_interface_type()->without_array()->name, var);
       }
    }
 
@@ -279,10 +344,19 @@ validate_intrastage_interface_blocks(struct gl_shader_program *prog,
    }
 }
 
+static bool
+is_builtin_gl_in_block(ir_variable *var, int consumer_stage)
+{
+   return !strcmp(var->name, "gl_in") &&
+          (consumer_stage == MESA_SHADER_TESS_CTRL ||
+           consumer_stage == MESA_SHADER_TESS_EVAL ||
+           consumer_stage == MESA_SHADER_GEOMETRY);
+}
+
 void
 validate_interstage_inout_blocks(struct gl_shader_program *prog,
-                                 const gl_shader *producer,
-                                 const gl_shader *consumer)
+                                 const gl_linked_shader *producer,
+                                 const gl_linked_shader *consumer)
 {
    interface_block_definitions definitions;
    /* VS -> GS, VS -> TCS, VS -> TES, TES -> GS */
@@ -290,28 +364,67 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
                                    consumer->Stage != MESA_SHADER_FRAGMENT) ||
                                   consumer->Stage == MESA_SHADER_GEOMETRY;
 
-   /* Add input interfaces from the consumer to the symbol table. */
-   foreach_in_list(ir_instruction, node, consumer->ir) {
-      ir_variable *var = node->as_variable();
-      if (!var || !var->get_interface_type() || var->data.mode != ir_var_shader_in)
-         continue;
+   /* Check that block re-declarations of gl_PerVertex are compatible
+    * across shaders: From OpenGL Shading Language 4.5, section
+    * "7.1 Built-In Language Variables", page 130 of the PDF:
+    *
+    *    "If multiple shaders using members of a built-in block belonging
+    *     to the same interface are linked together in the same program,
+    *     they must all redeclare the built-in block in the same way, as
+    *     described in section 4.3.9 “Interface Blocks” for interface-block
+    *     matching, or a link-time error will result."
+    *
+    * This is done explicitly outside of iterating the member variable
+    * declarations because it is possible that the variables are not used and
+    * so they would have been optimised out.
+    */
+   const glsl_type *consumer_iface =
+      consumer->symbols->get_interface("gl_PerVertex",
+                                       ir_var_shader_in);
 
-      definitions.store(var);
+   const glsl_type *producer_iface =
+      producer->symbols->get_interface("gl_PerVertex",
+                                       ir_var_shader_out);
+
+   if (producer_iface && consumer_iface &&
+       interstage_member_mismatch(prog, consumer_iface, producer_iface)) {
+      linker_error(prog, "Incompatible or missing gl_PerVertex re-declaration "
+                   "in consecutive shaders");
+      return;
    }
 
-   /* Verify that the producer's output interfaces match. */
+   /* Add output interfaces from the producer to the symbol table. */
    foreach_in_list(ir_instruction, node, producer->ir) {
       ir_variable *var = node->as_variable();
       if (!var || !var->get_interface_type() || var->data.mode != ir_var_shader_out)
          continue;
 
-      ir_variable *consumer_def = definitions.lookup(var);
+      definitions.store(var);
+   }
 
-      /* The consumer doesn't use this output block.  Ignore it. */
-      if (consumer_def == NULL)
+   /* Verify that the consumer's input interfaces match. */
+   foreach_in_list(ir_instruction, node, consumer->ir) {
+      ir_variable *var = node->as_variable();
+      if (!var || !var->get_interface_type() || var->data.mode != ir_var_shader_in)
          continue;
 
-      if (!interstage_match(var, consumer_def, extra_array_level)) {
+      ir_variable *producer_def = definitions.lookup(var);
+
+      /* The producer doesn't generate this input: fail to link. Skip built-in
+       * 'gl_in[]' since that may not be present if the producer does not
+       * write to any of the pre-defined outputs (e.g. if the vertex shader
+       * does not write to gl_Position, etc), which is allowed and results in
+       * undefined behavior.
+       */
+      if (producer_def == NULL &&
+          !is_builtin_gl_in_block(var, consumer->Stage)) {
+         linker_error(prog, "Input block `%s' is not an output of "
+                      "the previous stage\n", var->get_interface_type()->name);
+         return;
+      }
+
+      if (producer_def &&
+          !interstage_match(prog, producer_def, var, extra_array_level)) {
          linker_error(prog, "definitions of interface block `%s' do not "
                       "match\n", var->get_interface_type()->name);
          return;
@@ -322,15 +435,15 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
 
 void
 validate_interstage_uniform_blocks(struct gl_shader_program *prog,
-                                   gl_shader **stages, int num_stages)
+                                   gl_linked_shader **stages)
 {
    interface_block_definitions definitions;
 
-   for (int i = 0; i < num_stages; i++) {
+   for (int i = 0; i < MESA_SHADER_STAGES; i++) {
       if (stages[i] == NULL)
          continue;
 
-      const gl_shader *stage = stages[i];
+      const gl_linked_shader *stage = stages[i];
       foreach_in_list(ir_instruction, node, stage->ir) {
          ir_variable *var = node->as_variable();
          if (!var || !var->get_interface_type() ||
@@ -347,7 +460,7 @@ validate_interstage_uniform_blocks(struct gl_shader_program *prog,
              * shaders are in the same shader stage).
              */
             if (!intrastage_match(old_def, var, prog)) {
-               linker_error(prog, "definitions of interface block `%s' do not "
+               linker_error(prog, "definitions of uniform block `%s' do not "
                             "match\n", var->get_interface_type()->name);
                return;
             }

@@ -51,7 +51,7 @@ assign(deref lhs, operand rhs, operand condition, int writemask)
    void *mem_ctx = ralloc_parent(lhs.val);
 
    ir_assignment *assign = new(mem_ctx) ir_assignment(lhs.val,
-						      rhs.val,
+                                                      rhs.val,
                                                       condition.val,
                                                       writemask);
 
@@ -89,11 +89,11 @@ swizzle(operand a, int swizzle, int components)
    void *mem_ctx = ralloc_parent(a.val);
 
    return new(mem_ctx) ir_swizzle(a.val,
-				  GET_SWZ(swizzle, 0),
-				  GET_SWZ(swizzle, 1),
-				  GET_SWZ(swizzle, 2),
-				  GET_SWZ(swizzle, 3),
-				  components);
+                                  GET_SWZ(swizzle, 0),
+                                  GET_SWZ(swizzle, 1),
+                                  GET_SWZ(swizzle, 2),
+                                  GET_SWZ(swizzle, 3),
+                                  components);
 }
 
 ir_swizzle *
@@ -315,6 +315,12 @@ exp(operand a)
 }
 
 ir_expression *
+rcp(operand a)
+{
+   return expr(ir_unop_rcp, a);
+}
+
+ir_expression *
 rsq(operand a)
 {
    return expr(ir_unop_rsq, a);
@@ -417,6 +423,12 @@ bit_or(operand a, operand b)
 }
 
 ir_expression*
+bit_xor(operand a, operand b)
+{
+   return expr(ir_binop_bit_xor, a, b);
+}
+
+ir_expression*
 lshift(operand a, operand b)
 {
    return expr(ir_binop_lshift, a, b);
@@ -510,6 +522,30 @@ ir_expression *
 b2f(operand a)
 {
    return expr(ir_unop_b2f, a);
+}
+
+ir_expression*
+bitcast_d2i64(operand a)
+{
+   return expr(ir_unop_bitcast_d2i64, a);
+}
+
+ir_expression*
+bitcast_d2u64(operand a)
+{
+   return expr(ir_unop_bitcast_d2u64, a);
+}
+
+ir_expression*
+bitcast_i642d(operand a)
+{
+   return expr(ir_unop_bitcast_i642d, a);
+}
+
+ir_expression*
+bitcast_u642d(operand a)
+{
+   return expr(ir_unop_bitcast_u642d, a);
 }
 
 ir_expression *

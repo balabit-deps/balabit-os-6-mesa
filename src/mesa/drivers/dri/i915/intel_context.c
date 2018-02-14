@@ -314,15 +314,18 @@ static const struct debug_control debug_control[] = {
 
 
 static void
-intelInvalidateState(struct gl_context * ctx, GLuint new_state)
+intelInvalidateState(struct gl_context * ctx)
 {
+   GLuint new_state = ctx->NewState;
     struct intel_context *intel = intel_context(ctx);
 
     if (ctx->swrast_context)
        _swrast_InvalidateState(ctx, new_state);
-   _vbo_InvalidateState(ctx, new_state);
 
    intel->NewGLState |= new_state;
+
+   if (new_state & (_NEW_SCISSOR | _NEW_BUFFERS | _NEW_VIEWPORT))
+      _mesa_update_draw_buffer_bounds(ctx, ctx->DrawBuffer);
 
    if (intel->vtbl.invalidate_state)
       intel->vtbl.invalidate_state( intel, new_state );
@@ -858,6 +861,7 @@ intel_update_image_buffers(struct intel_context *intel, __DRIdrawable *drawable)
    struct __DRIimageList images;
    unsigned int format;
    uint32_t buffer_mask = 0;
+   int ret;
 
    front_rb = intel_get_renderbuffer(fb, BUFFER_FRONT_LEFT);
    back_rb = intel_get_renderbuffer(fb, BUFFER_BACK_LEFT);
@@ -877,12 +881,14 @@ intel_update_image_buffers(struct intel_context *intel, __DRIdrawable *drawable)
    if (back_rb)
       buffer_mask |= __DRI_IMAGE_BUFFER_BACK;
 
-   (*screen->image.loader->getBuffers) (drawable,
-                                        driGLFormatToImageFormat(format),
-                                        &drawable->dri2.stamp,
-                                        drawable->loaderPrivate,
-                                        buffer_mask,
-                                        &images);
+   ret = screen->image.loader->getBuffers(drawable,
+                                          driGLFormatToImageFormat(format),
+                                          &drawable->dri2.stamp,
+                                          drawable->loaderPrivate,
+                                          buffer_mask,
+                                          &images);
+   if (!ret)
+      return;
 
    if (images.image_mask & __DRI_IMAGE_BUFFER_FRONT) {
       drawable->w = images.front->width;

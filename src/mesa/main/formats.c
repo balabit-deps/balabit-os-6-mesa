@@ -68,9 +68,9 @@ struct gl_format_info
    bool IsSRGBFormat;
 
    /**
-    * To describe compressed formats.  If not compressed, Width=Height=1.
+    * To describe compressed formats.  If not compressed, Width=Height=Depth=1.
     */
-   GLubyte BlockWidth, BlockHeight;
+   GLubyte BlockWidth, BlockHeight, BlockDepth;
    GLubyte BytesPerBlock;
 
    uint8_t Swizzle[4];
@@ -132,21 +132,25 @@ _mesa_get_format_bits(mesa_format format, GLenum pname)
    case GL_TEXTURE_RED_SIZE:
    case GL_RENDERBUFFER_RED_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE:
+   case GL_INTERNALFORMAT_RED_SIZE:
       return info->RedBits;
    case GL_GREEN_BITS:
    case GL_TEXTURE_GREEN_SIZE:
    case GL_RENDERBUFFER_GREEN_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE:
+   case GL_INTERNALFORMAT_GREEN_SIZE:
       return info->GreenBits;
    case GL_BLUE_BITS:
    case GL_TEXTURE_BLUE_SIZE:
    case GL_RENDERBUFFER_BLUE_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE:
+   case GL_INTERNALFORMAT_BLUE_SIZE:
       return info->BlueBits;
    case GL_ALPHA_BITS:
    case GL_TEXTURE_ALPHA_SIZE:
    case GL_RENDERBUFFER_ALPHA_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE:
+   case GL_INTERNALFORMAT_ALPHA_SIZE:
       return info->AlphaBits;
    case GL_TEXTURE_INTENSITY_SIZE:
       return info->IntensityBits;
@@ -158,11 +162,13 @@ _mesa_get_format_bits(mesa_format format, GLenum pname)
    case GL_TEXTURE_DEPTH_SIZE_ARB:
    case GL_RENDERBUFFER_DEPTH_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE:
+   case GL_INTERNALFORMAT_DEPTH_SIZE:
       return info->DepthBits;
    case GL_STENCIL_BITS:
    case GL_TEXTURE_STENCIL_SIZE_EXT:
    case GL_RENDERBUFFER_STENCIL_SIZE_EXT:
    case GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE:
+   case GL_INTERNALFORMAT_STENCIL_SIZE:
       return info->StencilBits;
    default:
       _mesa_problem(NULL, "bad pname in _mesa_get_format_bits()");
@@ -309,8 +315,32 @@ void
 _mesa_get_format_block_size(mesa_format format, GLuint *bw, GLuint *bh)
 {
    const struct gl_format_info *info = _mesa_get_format_info(format);
+   /* Use _mesa_get_format_block_size_3d() for 3D blocks. */
+   assert(info->BlockDepth == 1);
+
    *bw = info->BlockWidth;
    *bh = info->BlockHeight;
+}
+
+
+/**
+ * Return the block size (in pixels) for the given format. Normally
+ * the block size is 1x1x1. But compressed formats will have block
+ * sizes of 4x4x4, 3x3x3 pixels, etc.
+ * \param bw  returns block width in pixels
+ * \param bh  returns block height in pixels
+ * \param bd  returns block depth in pixels
+ */
+void
+_mesa_get_format_block_size_3d(mesa_format format,
+                               GLuint *bw,
+                               GLuint *bh,
+                               GLuint *bd)
+{
+   const struct gl_format_info *info = _mesa_get_format_info(format);
+   *bw = info->BlockWidth;
+   *bh = info->BlockHeight;
+   *bd = info->BlockDepth;
 }
 
 
@@ -592,123 +622,6 @@ _mesa_is_format_etc2(mesa_format format)
 
 
 /**
- * For an sRGB format, return the corresponding linear color space format.
- * For non-sRGB formats, return the format as-is.
- */
-mesa_format
-_mesa_get_srgb_format_linear(mesa_format format)
-{
-   switch (format) {
-   case MESA_FORMAT_BGR_SRGB8:
-      format = MESA_FORMAT_BGR_UNORM8;
-      break;
-   case MESA_FORMAT_A8B8G8R8_SRGB:
-      format = MESA_FORMAT_A8B8G8R8_UNORM;
-      break;
-   case MESA_FORMAT_B8G8R8A8_SRGB:
-      format = MESA_FORMAT_B8G8R8A8_UNORM;
-      break;
-   case MESA_FORMAT_A8R8G8B8_SRGB:
-      format = MESA_FORMAT_A8R8G8B8_UNORM;
-      break;
-   case MESA_FORMAT_R8G8B8A8_SRGB:
-      format = MESA_FORMAT_R8G8B8A8_UNORM;
-      break;
-   case MESA_FORMAT_L_SRGB8:
-      format = MESA_FORMAT_L_UNORM8;
-      break;
-   case MESA_FORMAT_L8A8_SRGB:
-      format = MESA_FORMAT_L8A8_UNORM;
-      break;
-   case MESA_FORMAT_A8L8_SRGB:
-      format = MESA_FORMAT_A8L8_UNORM;
-      break;
-   case MESA_FORMAT_SRGB_DXT1:
-      format = MESA_FORMAT_RGB_DXT1;
-      break;
-   case MESA_FORMAT_SRGBA_DXT1:
-      format = MESA_FORMAT_RGBA_DXT1;
-      break;
-   case MESA_FORMAT_SRGBA_DXT3:
-      format = MESA_FORMAT_RGBA_DXT3;
-      break;
-   case MESA_FORMAT_SRGBA_DXT5:
-      format = MESA_FORMAT_RGBA_DXT5;
-      break;
-   case MESA_FORMAT_R8G8B8X8_SRGB:
-      format = MESA_FORMAT_R8G8B8X8_UNORM;
-      break;
-   case MESA_FORMAT_X8B8G8R8_SRGB:
-      format = MESA_FORMAT_X8B8G8R8_UNORM;
-      break;
-   case MESA_FORMAT_ETC2_SRGB8:
-      format = MESA_FORMAT_ETC2_RGB8;
-      break;
-   case MESA_FORMAT_ETC2_SRGB8_ALPHA8_EAC:
-      format = MESA_FORMAT_ETC2_RGBA8_EAC;
-      break;
-   case MESA_FORMAT_ETC2_SRGB8_PUNCHTHROUGH_ALPHA1:
-      format = MESA_FORMAT_ETC2_RGB8_PUNCHTHROUGH_ALPHA1;
-      break;
-   case MESA_FORMAT_BPTC_SRGB_ALPHA_UNORM:
-      format = MESA_FORMAT_BPTC_RGBA_UNORM;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_4x4:
-      format = MESA_FORMAT_RGBA_ASTC_4x4;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_5x4:
-      format = MESA_FORMAT_RGBA_ASTC_5x4;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_5x5:
-      format = MESA_FORMAT_RGBA_ASTC_5x5;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_6x5:
-      format = MESA_FORMAT_RGBA_ASTC_6x5;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_6x6:
-      format = MESA_FORMAT_RGBA_ASTC_6x6;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_8x5:
-      format = MESA_FORMAT_RGBA_ASTC_8x5;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_8x6:
-      format = MESA_FORMAT_RGBA_ASTC_8x6;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_8x8:
-      format = MESA_FORMAT_RGBA_ASTC_8x8;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_10x5:
-      format = MESA_FORMAT_RGBA_ASTC_10x5;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_10x6:
-      format = MESA_FORMAT_RGBA_ASTC_10x6;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_10x8:
-      format = MESA_FORMAT_RGBA_ASTC_10x8;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_10x10:
-      format = MESA_FORMAT_RGBA_ASTC_10x10;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_12x10:
-      format = MESA_FORMAT_RGBA_ASTC_12x10;
-      break;
-   case MESA_FORMAT_SRGB8_ALPHA8_ASTC_12x12:
-      format = MESA_FORMAT_RGBA_ASTC_12x12;
-      break;
-   case MESA_FORMAT_B8G8R8X8_SRGB:
-      format = MESA_FORMAT_B8G8R8X8_UNORM;
-      break;
-   case MESA_FORMAT_X8R8G8B8_SRGB:
-      format = MESA_FORMAT_X8R8G8B8_UNORM;
-      break;
-   default:
-      break;
-   }
-   return format;
-}
-
-
-/**
  * If the given format is a compressed format, return a corresponding
  * uncompressed format.
  */
@@ -831,20 +744,22 @@ _mesa_format_image_size(mesa_format format, GLsizei width,
                         GLsizei height, GLsizei depth)
 {
    const struct gl_format_info *info = _mesa_get_format_info(format);
+   GLuint sz;
    /* Strictly speaking, a conditional isn't needed here */
-   if (info->BlockWidth > 1 || info->BlockHeight > 1) {
+   if (info->BlockWidth > 1 || info->BlockHeight > 1 || info->BlockDepth > 1) {
       /* compressed format (2D only for now) */
-      const GLuint bw = info->BlockWidth, bh = info->BlockHeight;
+      const GLuint bw = info->BlockWidth;
+      const GLuint bh = info->BlockHeight;
+      const GLuint bd = info->BlockDepth;
       const GLuint wblocks = (width + bw - 1) / bw;
       const GLuint hblocks = (height + bh - 1) / bh;
-      const GLuint sz = wblocks * hblocks * info->BytesPerBlock;
-      return sz * depth;
-   }
-   else {
+      const GLuint dblocks = (depth + bd - 1) / bd;
+      sz = wblocks * hblocks * dblocks * info->BytesPerBlock;
+   } else
       /* non-compressed */
-      const GLuint sz = width * height * depth * info->BytesPerBlock;
-      return sz;
-   }
+      sz = width * height * depth * info->BytesPerBlock;
+
+   return sz;
 }
 
 
@@ -857,23 +772,23 @@ _mesa_format_image_size64(mesa_format format, GLsizei width,
                           GLsizei height, GLsizei depth)
 {
    const struct gl_format_info *info = _mesa_get_format_info(format);
+   uint64_t sz;
    /* Strictly speaking, a conditional isn't needed here */
-   if (info->BlockWidth > 1 || info->BlockHeight > 1) {
+   if (info->BlockWidth > 1 || info->BlockHeight > 1 || info->BlockDepth > 1) {
       /* compressed format (2D only for now) */
-      const uint64_t bw = info->BlockWidth, bh = info->BlockHeight;
+      const uint64_t bw = info->BlockWidth;
+      const uint64_t bh = info->BlockHeight;
+      const uint64_t bd = info->BlockDepth;
       const uint64_t wblocks = (width + bw - 1) / bw;
       const uint64_t hblocks = (height + bh - 1) / bh;
-      const uint64_t sz = wblocks * hblocks * info->BytesPerBlock;
-      return sz * depth;
-   }
-   else {
+      const uint64_t dblocks = (depth + bd - 1) / bd;
+      sz = wblocks * hblocks * dblocks * info->BytesPerBlock;
+   } else
       /* non-compressed */
-      const uint64_t sz = ((uint64_t) width *
-                           (uint64_t) height *
-                           (uint64_t) depth *
-                           info->BytesPerBlock);
-      return sz;
-   }
+      sz = ((uint64_t) width * (uint64_t) height *
+            (uint64_t) depth * info->BytesPerBlock);
+
+   return sz;
 }
 
 

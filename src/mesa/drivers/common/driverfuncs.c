@@ -47,7 +47,7 @@
 #include "main/fbobject.h"
 #include "main/samplerobj.h"
 #include "main/syncobj.h"
-#include "main/texturebarrier.h"
+#include "main/barrier.h"
 #include "main/transformfeedback.h"
 
 #include "program/program.h"
@@ -90,7 +90,7 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
 
    /* Texture functions */
    driver->ChooseTextureFormat = _mesa_choose_tex_format;
-   driver->QuerySamplesForFormat = _mesa_query_samples_for_format;
+   driver->QueryInternalFormat = _mesa_query_internal_format_default;
    driver->TexImage = _mesa_store_teximage;
    driver->TexSubImage = _mesa_store_texsubimage;
    driver->GetTexSubImage = _mesa_meta_GetTexSubImage;
@@ -113,9 +113,11 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->DrawTex = _mesa_meta_DrawTex;
 
    /* Vertex/fragment programs */
-   driver->BindProgram = NULL;
    driver->NewProgram = _mesa_new_program;
    driver->DeleteProgram = _mesa_delete_program;
+
+   /* ATI_fragment_shader */
+   driver->NewATIfs = NULL;
 
    /* simple state commands */
    driver->AlphaFunc = NULL;
@@ -176,7 +178,7 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->BlitFramebuffer = _swrast_BlitFramebuffer;
    driver->DiscardFramebuffer = NULL;
 
-   _mesa_init_texture_barrier_functions(driver);
+   _mesa_init_barrier_functions(driver);
    _mesa_init_shader_object_functions(driver);
    _mesa_init_transform_feedback_functions(driver);
    _mesa_init_sampler_object_functions(driver);
@@ -198,6 +200,9 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
 
    /* GL_ARB_texture_multisample */
    driver->GetSamplePosition = NULL;
+
+   /* Multithreading */
+   driver->SetBackgroundContext = NULL;
 }
 
 
@@ -245,7 +250,7 @@ _mesa_init_driver_state(struct gl_context *ctx)
    ctx->Driver.Enable(ctx, GL_LINE_SMOOTH, ctx->Line.SmoothFlag);
    ctx->Driver.Enable(ctx, GL_POLYGON_STIPPLE, ctx->Polygon.StippleFlag);
    ctx->Driver.Enable(ctx, GL_SCISSOR_TEST, ctx->Scissor.EnableFlags);
-   ctx->Driver.Enable(ctx, GL_STENCIL_TEST, ctx->Stencil._Enabled);
+   ctx->Driver.Enable(ctx, GL_STENCIL_TEST, ctx->Stencil.Enabled);
    ctx->Driver.Enable(ctx, GL_TEXTURE_1D, GL_FALSE);
    ctx->Driver.Enable(ctx, GL_TEXTURE_2D, GL_FALSE);
    ctx->Driver.Enable(ctx, GL_TEXTURE_RECTANGLE_NV, GL_FALSE);

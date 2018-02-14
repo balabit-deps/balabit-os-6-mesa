@@ -41,7 +41,7 @@
  * ssa_2 = fadd(ssa_1.x, ssa_1.y)
  *
  * While this is "worse" because it adds a bunch of unneeded dependencies, it
- * actually makes it much easier for vec4-based backends to coalesce the MOV's
+ * actually makes it much easier for vec4-based backends to coalesce the MOVs
  * that result from the vec4 operation because it doesn't have to worry about
  * quite as many reads.
  */
@@ -62,9 +62,11 @@ ssa_def_dominates_instr(nir_ssa_def *def, nir_instr *instr)
 }
 
 static bool
-move_vec_src_uses_to_dest_block(nir_block *block, void *shader)
+move_vec_src_uses_to_dest_block(nir_block *block)
 {
-   nir_foreach_instr(block, instr) {
+   bool progress = false;
+
+   nir_foreach_instr(instr, block) {
       if (instr->type != nir_instr_type_alu)
          continue;
 
@@ -114,14 +116,14 @@ move_vec_src_uses_to_dest_block(nir_block *block, void *shader)
             if (vec->src[j].src.ssa != vec->src[i].src.ssa)
                continue;
 
-            /* Mark the given chanle as having been handled */
+            /* Mark the given channel as having been handled */
             srcs_remaining &= ~(1 << j);
 
-            /* Mark the appropreate channel as coming from src j */
+            /* Mark the appropriate channel as coming from src j */
             swizzle[vec->src[j].swizzle[0]] = j;
          }
 
-         nir_foreach_use_safe(vec->src[i].src.ssa, use) {
+         nir_foreach_use_safe(use, vec->src[i].src.ssa) {
             if (use->parent_instr == &vec->instr)
                continue;
 
@@ -167,31 +169,44 @@ move_vec_src_uses_to_dest_block(nir_block *block, void *shader)
                   continue;
 
                use_alu_src->swizzle[j] = swizzle[use_alu_src->swizzle[j]];
+               progress = true;
             }
          }
       }
    }
 
-   return true;
+   return progress;
 }
 
-static void
+static bool
 nir_move_vec_src_uses_to_dest_impl(nir_shader *shader, nir_function_impl *impl)
 {
+   bool progress = false;
+
    nir_metadata_require(impl, nir_metadata_dominance);
 
    nir_index_instrs(impl);
-   nir_foreach_block(impl, move_vec_src_uses_to_dest_block, shader);
+
+   nir_foreach_block(block, impl) {
+      progress |= move_vec_src_uses_to_dest_block(block);
+   }
 
    nir_metadata_preserve(impl, nir_metadata_block_index |
                                nir_metadata_dominance);
+
+   return progress;
 }
 
-void
+bool
 nir_move_vec_src_uses_to_dest(nir_shader *shader)
 {
-   nir_foreach_function(shader, function) {
+   bool progress = false;
+
+   nir_foreach_function(function, shader) {
       if (function->impl)
-         nir_move_vec_src_uses_to_dest_impl(shader, function->impl);
+         progress |= nir_move_vec_src_uses_to_dest_impl(shader,
+                                                        function->impl);
    }
+
+   return progress;
 }

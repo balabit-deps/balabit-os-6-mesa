@@ -110,67 +110,66 @@ struct gl_list_extensions
  * Checks if dd_function_table::SaveNeedFlush is marked to flush
  * stored (save) vertices, and calls vbo_save_SaveFlushVertices if so.
  */
-#define SAVE_FLUSH_VERTICES(ctx)		\
-do {						\
-   if (ctx->Driver.SaveNeedFlush)		\
-      vbo_save_SaveFlushVertices(ctx);               \
-} while (0)
+#define SAVE_FLUSH_VERTICES(ctx)                     \
+   do {                                              \
+      if (ctx->Driver.SaveNeedFlush)                 \
+         vbo_save_SaveFlushVertices(ctx);            \
+   } while (0)
 
 
 /**
  * Macro to assert that the API call was made outside the
  * glBegin()/glEnd() pair, with return value.
- * 
+ *
  * \param ctx GL context.
  * \param retval value to return value in case the assertion fails.
  */
-#define ASSERT_OUTSIDE_SAVE_BEGIN_END_WITH_RETVAL(ctx, retval)		\
-do {									\
-   if (ctx->Driver.CurrentSavePrimitive <= PRIM_MAX) {			\
-      _mesa_compile_error( ctx, GL_INVALID_OPERATION, "glBegin/End" );	\
-      return retval;							\
-   }									\
-} while (0)
+#define ASSERT_OUTSIDE_SAVE_BEGIN_END_WITH_RETVAL(ctx, retval)          \
+   do {                                                                 \
+      if (ctx->Driver.CurrentSavePrimitive <= PRIM_MAX) {               \
+         _mesa_compile_error( ctx, GL_INVALID_OPERATION, "glBegin/End" ); \
+         return retval;                                                 \
+      }                                                                 \
+   } while (0)
 
 /**
  * Macro to assert that the API call was made outside the
  * glBegin()/glEnd() pair.
- * 
+ *
  * \param ctx GL context.
  */
-#define ASSERT_OUTSIDE_SAVE_BEGIN_END(ctx)				\
-do {									\
-   if (ctx->Driver.CurrentSavePrimitive <= PRIM_MAX) {			\
-      _mesa_compile_error( ctx, GL_INVALID_OPERATION, "glBegin/End" );	\
-      return;								\
-   }									\
-} while (0)
+#define ASSERT_OUTSIDE_SAVE_BEGIN_END(ctx)                              \
+   do {                                                                 \
+      if (ctx->Driver.CurrentSavePrimitive <= PRIM_MAX) {               \
+         _mesa_compile_error( ctx, GL_INVALID_OPERATION, "glBegin/End" ); \
+         return;                                                        \
+      }                                                                 \
+   } while (0)
 
 /**
  * Macro to assert that the API call was made outside the
  * glBegin()/glEnd() pair and flush the vertices.
- * 
+ *
  * \param ctx GL context.
  */
-#define ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH(ctx)			\
-do {									\
-   ASSERT_OUTSIDE_SAVE_BEGIN_END(ctx);					\
-   SAVE_FLUSH_VERTICES(ctx);						\
-} while (0)
+#define ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH(ctx)                    \
+   do {                                                                 \
+      ASSERT_OUTSIDE_SAVE_BEGIN_END(ctx);                               \
+      SAVE_FLUSH_VERTICES(ctx);                                         \
+   } while (0)
 
 /**
  * Macro to assert that the API call was made outside the
  * glBegin()/glEnd() pair and flush the vertices, with return value.
- * 
+ *
  * \param ctx GL context.
  * \param retval value to return value in case the assertion fails.
  */
-#define ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH_WITH_RETVAL(ctx, retval)\
-do {									\
-   ASSERT_OUTSIDE_SAVE_BEGIN_END_WITH_RETVAL(ctx, retval);		\
-   SAVE_FLUSH_VERTICES(ctx);						\
-} while (0)
-
+#define ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH_WITH_RETVAL(ctx, retval) \
+   do {                                                                 \
+      ASSERT_OUTSIDE_SAVE_BEGIN_END_WITH_RETVAL(ctx, retval);           \
+      SAVE_FLUSH_VERTICES(ctx);                                         \
+   } while (0)
 
 
 /**
@@ -304,8 +303,8 @@ typedef enum
    OPCODE_SAMPLE_COVERAGE,
    /* GL_ARB_window_pos */
    OPCODE_WINDOW_POS_ARB,
-   /* GL_NV_fragment_program */
-   OPCODE_BIND_PROGRAM_NV,
+   /* GL_ARB_vertex_program */
+   OPCODE_BIND_PROGRAM_ARB,
    OPCODE_PROGRAM_LOCAL_PARAMETER_ARB,
    /* GL_EXT_stencil_two_side */
    OPCODE_ACTIVE_STENCIL_FACE_EXT,
@@ -326,7 +325,8 @@ typedef enum
    OPCODE_STENCIL_FUNC_SEPARATE,
    OPCODE_STENCIL_OP_SEPARATE,
    OPCODE_STENCIL_MASK_SEPARATE,
-
+   /* GL_NV_primitive_restart */
+   OPCODE_PRIMITIVE_RESTART_NV,
    /* GL_ARB_shader_objects */
    OPCODE_USE_PROGRAM,
    OPCODE_UNIFORM_1F,
@@ -484,6 +484,9 @@ typedef enum
 
    /* EXT_polygon_offset_clamp */
    OPCODE_POLYGON_OFFSET_CLAMP,
+
+   /* EXT_window_rectangles */
+   OPCODE_WINDOW_RECTANGLES,
 
    /* The following three are meta instructions */
    OPCODE_ERROR,                /* raise compiled-in error */
@@ -1090,7 +1093,10 @@ _mesa_delete_list(struct gl_context *ctx, struct gl_display_list *dlist)
             free(get_pointer(&n[3]));
             n += InstSize[n[0].opcode];
             break;
-
+         case OPCODE_WINDOW_RECTANGLES:
+            free(get_pointer(&n[3]));
+            n += InstSize[n[0].opcode];
+            break;
          case OPCODE_CONTINUE:
             n = (Node *) get_pointer(&n[1]);
             free(block);
@@ -1266,7 +1272,7 @@ unpack_image(struct gl_context *ctx, GLuint dimensions,
 
       map = (GLubyte *)
          ctx->Driver.MapBufferRange(ctx, 0, unpack->BufferObj->Size,
-				    GL_MAP_READ_BIT, unpack->BufferObj,
+                                    GL_MAP_READ_BIT, unpack->BufferObj,
                                     MAP_INTERNAL);
       if (!map) {
          /* unable to map src buffer! */
@@ -1740,79 +1746,79 @@ save_BlendEquationSeparatei(GLuint buf, GLenum modeRGB, GLenum modeA)
 
 /* GL_ARB_draw_instanced. */
 static void GLAPIENTRY
-save_DrawArraysInstancedARB(GLenum mode,
-			    GLint first,
-			    GLsizei count,
-			    GLsizei primcount)
+save_DrawArraysInstancedARB(UNUSED GLenum mode,
+                            UNUSED GLint first,
+                            UNUSED GLsizei count,
+                            UNUSED GLsizei primcount)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawArraysInstanced() during display list compile");
+               "glDrawArraysInstanced() during display list compile");
 }
 
 static void GLAPIENTRY
-save_DrawElementsInstancedARB(GLenum mode,
-			      GLsizei count,
-			      GLenum type,
-			      const GLvoid *indices,
-			      GLsizei primcount)
+save_DrawElementsInstancedARB(UNUSED GLenum mode,
+                              UNUSED GLsizei count,
+                              UNUSED GLenum type,
+                              UNUSED const GLvoid *indices,
+                              UNUSED GLsizei primcount)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawElementsInstanced() during display list compile");
+               "glDrawElementsInstanced() during display list compile");
 }
 
 static void GLAPIENTRY
-save_DrawElementsInstancedBaseVertexARB(GLenum mode,
-					GLsizei count,
-					GLenum type,
-					const GLvoid *indices,
-					GLsizei primcount,
-					GLint basevertex)
+save_DrawElementsInstancedBaseVertexARB(UNUSED GLenum mode,
+                                        UNUSED GLsizei count,
+                                        UNUSED GLenum type,
+                                        UNUSED const GLvoid *indices,
+                                        UNUSED GLsizei primcount,
+                                        UNUSED GLint basevertex)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawElementsInstancedBaseVertex() during display list compile");
+               "glDrawElementsInstancedBaseVertex() during display list compile");
 }
 
 /* GL_ARB_base_instance. */
 static void GLAPIENTRY
-save_DrawArraysInstancedBaseInstance(GLenum mode,
-                                     GLint first,
-                                     GLsizei count,
-                                     GLsizei primcount,
-                                     GLuint baseinstance)
+save_DrawArraysInstancedBaseInstance(UNUSED GLenum mode,
+                                     UNUSED GLint first,
+                                     UNUSED GLsizei count,
+                                     UNUSED GLsizei primcount,
+                                     UNUSED GLuint baseinstance)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawArraysInstancedBaseInstance() during display list compile");
+               "glDrawArraysInstancedBaseInstance() during display list compile");
 }
 
 static void APIENTRY
-save_DrawElementsInstancedBaseInstance(GLenum mode,
-                                       GLsizei count,
-                                       GLenum type,
-                                       const void *indices,
-                                       GLsizei primcount,
-                                       GLuint baseinstance)
+save_DrawElementsInstancedBaseInstance(UNUSED GLenum mode,
+                                       UNUSED GLsizei count,
+                                       UNUSED GLenum type,
+                                       UNUSED const void *indices,
+                                       UNUSED GLsizei primcount,
+                                       UNUSED GLuint baseinstance)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawElementsInstancedBaseInstance() during display list compile");
+               "glDrawElementsInstancedBaseInstance() during display list compile");
 }
 
 static void APIENTRY
-save_DrawElementsInstancedBaseVertexBaseInstance(GLenum mode,
-                                                 GLsizei count,
-                                                 GLenum type,
-                                                 const void *indices,
-                                                 GLsizei primcount,
-                                                 GLint basevertex,
-                                                 GLuint baseinstance)
+save_DrawElementsInstancedBaseVertexBaseInstance(UNUSED GLenum mode,
+                                                 UNUSED GLsizei count,
+                                                 UNUSED GLenum type,
+                                                 UNUSED const void *indices,
+                                                 UNUSED GLsizei primcount,
+                                                 UNUSED GLint basevertex,
+                                                 UNUSED GLuint baseinstance)
 {
    GET_CURRENT_CONTEXT(ctx);
    _mesa_error(ctx, GL_INVALID_OPERATION,
-	       "glDrawElementsInstancedBaseVertexBaseInstance() during display list compile");
+               "glDrawElementsInstancedBaseVertexBaseInstance() during display list compile");
 }
 
 
@@ -4957,15 +4963,15 @@ save_SampleCoverageARB(GLclampf value, GLboolean invert)
 
 
 /*
- * GL_NV_fragment_program
+ * GL_ARB_vertex_program
  */
 static void GLAPIENTRY
-save_BindProgramNV(GLenum target, GLuint id)
+save_BindProgramARB(GLenum target, GLuint id)
 {
    GET_CURRENT_CONTEXT(ctx);
    Node *n;
    ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH(ctx);
-   n = alloc_instruction(ctx, OPCODE_BIND_PROGRAM_NV, 2);
+   n = alloc_instruction(ctx, OPCODE_BIND_PROGRAM_ARB, 2);
    if (n) {
       n[1].e = target;
       n[2].ui = id;
@@ -5008,7 +5014,7 @@ save_ProgramEnvParameter4fvARB(GLenum target, GLuint index,
 
 static void GLAPIENTRY
 save_ProgramEnvParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
-				const GLfloat * params)
+                                const GLfloat * params)
 {
    GET_CURRENT_CONTEXT(ctx);
    Node *n;
@@ -5019,16 +5025,16 @@ save_ProgramEnvParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
       const GLfloat * p = params;
 
       for (i = 0 ; i < count ; i++) {
-	 n = alloc_instruction(ctx, OPCODE_PROGRAM_ENV_PARAMETER_ARB, 6);
-	 if (n) {
-	    n[1].e = target;
-	    n[2].ui = index;
-	    n[3].f = p[0];
-	    n[4].f = p[1];
-	    n[5].f = p[2];
-	    n[6].f = p[3];
-	    p += 4;
-	 }
+         n = alloc_instruction(ctx, OPCODE_PROGRAM_ENV_PARAMETER_ARB, 6);
+         if (n) {
+            n[1].e = target;
+            n[2].ui = index;
+            n[3].f = p[0];
+            n[4].f = p[1];
+            n[5].f = p[2];
+            n[6].f = p[3];
+            p += 4;
+         }
       }
    }
 
@@ -5105,7 +5111,7 @@ save_ProgramLocalParameter4fvARB(GLenum target, GLuint index,
 
 static void GLAPIENTRY
 save_ProgramLocalParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
-				  const GLfloat *params)
+                                  const GLfloat *params)
 {
    GET_CURRENT_CONTEXT(ctx);
    Node *n;
@@ -5116,16 +5122,16 @@ save_ProgramLocalParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
       const GLfloat * p = params;
 
       for (i = 0 ; i < count ; i++) {
-	 n = alloc_instruction(ctx, OPCODE_PROGRAM_LOCAL_PARAMETER_ARB, 6);
-	 if (n) {
-	    n[1].e = target;
-	    n[2].ui = index;
-	    n[3].f = p[0];
-	    n[4].f = p[1];
-	    n[5].f = p[2];
-	    n[6].f = p[3];
-	    p += 4;
-	 }
+         n = alloc_instruction(ctx, OPCODE_PROGRAM_LOCAL_PARAMETER_ARB, 6);
+         if (n) {
+            n[1].e = target;
+            n[2].ui = index;
+            n[3].f = p[0];
+            n[4].f = p[1];
+            n[5].f = p[2];
+            n[6].f = p[3];
+            p += 4;
+         }
       }
    }
 
@@ -5707,7 +5713,7 @@ save_Materialfv(GLenum face, GLenum pname, const GLfloat * param)
       _mesa_compile_error(ctx, GL_INVALID_ENUM, "glMaterial(pname)");
       return;
    }
-   
+
    if (ctx->ExecuteFlag) {
       CALL_Materialfv(ctx->Exec, (face, pname, param));
    }
@@ -5761,25 +5767,9 @@ save_Begin(GLenum mode)
       _mesa_compile_error(ctx, GL_INVALID_OPERATION, "recursive glBegin");
    }
    else {
-      Node *n;
-
       ctx->Driver.CurrentSavePrimitive = mode;
 
-      /* Give the driver an opportunity to hook in an optimized
-       * display list compiler.
-       */
-      if (vbo_save_NotifyBegin(ctx, mode))
-         return;
-
-      SAVE_FLUSH_VERTICES(ctx);
-      n = alloc_instruction(ctx, OPCODE_BEGIN, 1);
-      if (n) {
-         n[1].e = mode;
-      }
-
-      if (ctx->ExecuteFlag) {
-         CALL_Begin(ctx->Exec, (mode));
-      }
+      vbo_save_NotifyBegin(ctx, mode);
    }
 }
 
@@ -6020,7 +6010,7 @@ save_MultiTexCoord4fv(GLenum target, const GLfloat * v)
 
 
 /**
- * Record a GL_INVALID_VALUE error when a invalid vertex attribute
+ * Record a GL_INVALID_VALUE error when an invalid vertex attribute
  * index is found.
  */
 static void
@@ -6104,6 +6094,19 @@ save_VertexAttrib4fvARB(GLuint index, const GLfloat * v)
    else
       index_error();
 }
+
+static void GLAPIENTRY
+save_PrimitiveRestartNV(void)
+{
+   /* Note: this is used when outside a glBegin/End pair in a display list */
+   GET_CURRENT_CONTEXT(ctx);
+   ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH(ctx);
+   (void) alloc_instruction(ctx, OPCODE_PRIMITIVE_RESTART_NV, 0);
+   if (ctx->ExecuteFlag) {
+      CALL_PrimitiveRestartNV(ctx->Exec, ());
+   }
+}
+
 
 static void GLAPIENTRY
 save_BlitFramebufferEXT(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
@@ -7922,6 +7925,27 @@ save_UniformBlockBinding(GLuint prog, GLuint index, GLuint binding)
    }
 }
 
+/** GL_EXT_window_rectangles */
+static void GLAPIENTRY
+save_WindowRectanglesEXT(GLenum mode, GLsizei count, const GLint *box)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   Node *n;
+   ASSERT_OUTSIDE_SAVE_BEGIN_END_AND_FLUSH(ctx);
+   n = alloc_instruction(ctx, OPCODE_WINDOW_RECTANGLES, 2 + POINTER_DWORDS);
+   if (n) {
+      GLint *box_copy = NULL;
+
+      if (count > 0)
+         box_copy = memdup(box, sizeof(GLint) * 4 * count);
+      n[1].e = mode;
+      n[2].si = count;
+      save_pointer(&n[3], box_copy);
+   }
+   if (ctx->ExecuteFlag) {
+      CALL_WindowRectanglesEXT(ctx->Exec, (mode, count, box));
+   }
+}
 
 /**
  * Save an error-generating command into display list.
@@ -8607,7 +8631,7 @@ execute_list(struct gl_context *ctx, GLuint list)
          case OPCODE_WINDOW_POS_ARB:   /* GL_ARB_window_pos */
             CALL_WindowPos3f(ctx->Exec, (n[1].f, n[2].f, n[3].f));
             break;
-         case OPCODE_BIND_PROGRAM_NV:  /* GL_ARB_vertex_program */
+         case OPCODE_BIND_PROGRAM_ARB:  /* GL_ARB_vertex_program */
             CALL_BindProgramARB(ctx->Exec, (n[1].e, n[2].ui));
             break;
          case OPCODE_PROGRAM_LOCAL_PARAMETER_ARB:
@@ -8655,134 +8679,138 @@ execute_list(struct gl_context *ctx, GLuint list)
                CALL_DrawBuffers(ctx->Exec, (n[1].i, buffers));
             }
             break;
-	 case OPCODE_BLIT_FRAMEBUFFER:
-	    CALL_BlitFramebuffer(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i,
+         case OPCODE_BLIT_FRAMEBUFFER:
+            CALL_BlitFramebuffer(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i,
                                                 n[5].i, n[6].i, n[7].i, n[8].i,
                                                 n[9].i, n[10].e));
-	    break;
-	 case OPCODE_USE_PROGRAM:
-	    CALL_UseProgram(ctx->Exec, (n[1].ui));
-	    break;
-	 case OPCODE_UNIFORM_1F:
-	    CALL_Uniform1f(ctx->Exec, (n[1].i, n[2].f));
-	    break;
-	 case OPCODE_UNIFORM_2F:
-	    CALL_Uniform2f(ctx->Exec, (n[1].i, n[2].f, n[3].f));
-	    break;
-	 case OPCODE_UNIFORM_3F:
-	    CALL_Uniform3f(ctx->Exec, (n[1].i, n[2].f, n[3].f, n[4].f));
-	    break;
-	 case OPCODE_UNIFORM_4F:
-	    CALL_Uniform4f(ctx->Exec,
+            break;
+         case OPCODE_PRIMITIVE_RESTART_NV:
+            CALL_PrimitiveRestartNV(ctx->Exec, ());
+            break;
+
+         case OPCODE_USE_PROGRAM:
+            CALL_UseProgram(ctx->Exec, (n[1].ui));
+            break;
+         case OPCODE_UNIFORM_1F:
+            CALL_Uniform1f(ctx->Exec, (n[1].i, n[2].f));
+            break;
+         case OPCODE_UNIFORM_2F:
+            CALL_Uniform2f(ctx->Exec, (n[1].i, n[2].f, n[3].f));
+            break;
+         case OPCODE_UNIFORM_3F:
+            CALL_Uniform3f(ctx->Exec, (n[1].i, n[2].f, n[3].f, n[4].f));
+            break;
+         case OPCODE_UNIFORM_4F:
+            CALL_Uniform4f(ctx->Exec,
                               (n[1].i, n[2].f, n[3].f, n[4].f, n[5].f));
-	    break;
-	 case OPCODE_UNIFORM_1FV:
-	    CALL_Uniform1fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_2FV:
-	    CALL_Uniform2fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_3FV:
-	    CALL_Uniform3fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_4FV:
-	    CALL_Uniform4fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_1I:
-	    CALL_Uniform1i(ctx->Exec, (n[1].i, n[2].i));
-	    break;
-	 case OPCODE_UNIFORM_2I:
-	    CALL_Uniform2i(ctx->Exec, (n[1].i, n[2].i, n[3].i));
-	    break;
-	 case OPCODE_UNIFORM_3I:
-	    CALL_Uniform3i(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i));
-	    break;
-	 case OPCODE_UNIFORM_4I:
-	    CALL_Uniform4i(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_1FV:
+            CALL_Uniform1fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_2FV:
+            CALL_Uniform2fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_3FV:
+            CALL_Uniform3fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_4FV:
+            CALL_Uniform4fv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_1I:
+            CALL_Uniform1i(ctx->Exec, (n[1].i, n[2].i));
+            break;
+         case OPCODE_UNIFORM_2I:
+            CALL_Uniform2i(ctx->Exec, (n[1].i, n[2].i, n[3].i));
+            break;
+         case OPCODE_UNIFORM_3I:
+            CALL_Uniform3i(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i));
+            break;
+         case OPCODE_UNIFORM_4I:
+            CALL_Uniform4i(ctx->Exec,
                               (n[1].i, n[2].i, n[3].i, n[4].i, n[5].i));
-	    break;
-	 case OPCODE_UNIFORM_1IV:
-	    CALL_Uniform1iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_2IV:
-	    CALL_Uniform2iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_3IV:
-	    CALL_Uniform3iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_4IV:
-	    CALL_Uniform4iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
-	    break;
-	 case OPCODE_UNIFORM_1UI:
-	    /*CALL_Uniform1uiARB(ctx->Exec, (n[1].i, n[2].i));*/
-	    break;
-	 case OPCODE_UNIFORM_2UI:
-	    /*CALL_Uniform2uiARB(ctx->Exec, (n[1].i, n[2].i, n[3].i));*/
-	    break;
-	 case OPCODE_UNIFORM_3UI:
-	    /*CALL_Uniform3uiARB(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i));*/
-	    break;
-	 case OPCODE_UNIFORM_4UI:
-	    /*CALL_Uniform4uiARB(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_1IV:
+            CALL_Uniform1iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_2IV:
+            CALL_Uniform2iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_3IV:
+            CALL_Uniform3iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_4IV:
+            CALL_Uniform4iv(ctx->Exec, (n[1].i, n[2].i, get_pointer(&n[3])));
+            break;
+         case OPCODE_UNIFORM_1UI:
+            /*CALL_Uniform1uiARB(ctx->Exec, (n[1].i, n[2].i));*/
+            break;
+         case OPCODE_UNIFORM_2UI:
+            /*CALL_Uniform2uiARB(ctx->Exec, (n[1].i, n[2].i, n[3].i));*/
+            break;
+         case OPCODE_UNIFORM_3UI:
+            /*CALL_Uniform3uiARB(ctx->Exec, (n[1].i, n[2].i, n[3].i, n[4].i));*/
+            break;
+         case OPCODE_UNIFORM_4UI:
+            /*CALL_Uniform4uiARB(ctx->Exec,
                               (n[1].i, n[2].i, n[3].i, n[4].i, n[5].i));
             */
-	    break;
-	 case OPCODE_UNIFORM_1UIV:
-	    /*CALL_Uniform1uivARB(ctx->Exec, (n[1].i, n[2].i,
+            break;
+         case OPCODE_UNIFORM_1UIV:
+            /*CALL_Uniform1uivARB(ctx->Exec, (n[1].i, n[2].i,
                                               get_pointer(&n[3])));*/
-	    break;
-	 case OPCODE_UNIFORM_2UIV:
-	    /*CALL_Uniform2uivARB(ctx->Exec, (n[1].i, n[2].i,
+            break;
+         case OPCODE_UNIFORM_2UIV:
+            /*CALL_Uniform2uivARB(ctx->Exec, (n[1].i, n[2].i,
                                               get_pointer(&n[3])));*/
-	    break;
-	 case OPCODE_UNIFORM_3UIV:
-	    /*CALL_Uniform3uivARB(ctx->Exec, (n[1].i, n[2].i,
+            break;
+         case OPCODE_UNIFORM_3UIV:
+            /*CALL_Uniform3uivARB(ctx->Exec, (n[1].i, n[2].i,
                                               get_pointer(&n[3])));*/
-	    break;
-	 case OPCODE_UNIFORM_4UIV:
-	    /*CALL_Uniform4uivARB(ctx->Exec, (n[1].i, n[2].i,
+            break;
+         case OPCODE_UNIFORM_4UIV:
+            /*CALL_Uniform4uivARB(ctx->Exec, (n[1].i, n[2].i,
                                               get_pointer(&n[3])));*/
-	    break;
-	 case OPCODE_UNIFORM_MATRIX22:
-	    CALL_UniformMatrix2fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX22:
+            CALL_UniformMatrix2fv(ctx->Exec,
                                   (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX33:
-	    CALL_UniformMatrix3fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX33:
+            CALL_UniformMatrix3fv(ctx->Exec,
                                   (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX44:
-	    CALL_UniformMatrix4fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX44:
+            CALL_UniformMatrix4fv(ctx->Exec,
                                   (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX23:
-	    CALL_UniformMatrix2x3fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX23:
+            CALL_UniformMatrix2x3fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX32:
-	    CALL_UniformMatrix3x2fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX32:
+            CALL_UniformMatrix3x2fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX24:
-	    CALL_UniformMatrix2x4fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX24:
+            CALL_UniformMatrix2x4fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX42:
-	    CALL_UniformMatrix4x2fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX42:
+            CALL_UniformMatrix4x2fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX34:
-	    CALL_UniformMatrix3x4fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX34:
+            CALL_UniformMatrix3x4fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
-	 case OPCODE_UNIFORM_MATRIX43:
-	    CALL_UniformMatrix4x3fv(ctx->Exec,
+            break;
+         case OPCODE_UNIFORM_MATRIX43:
+            CALL_UniformMatrix4x3fv(ctx->Exec,
                                     (n[1].i, n[2].i, n[3].b, get_pointer(&n[4])));
-	    break;
+            break;
 
-	 case OPCODE_USE_PROGRAM_STAGES:
-	    CALL_UseProgramStages(ctx->Exec, (n[1].ui, n[2].ui, n[3].ui));
-	    break;
+         case OPCODE_USE_PROGRAM_STAGES:
+            CALL_UseProgramStages(ctx->Exec, (n[1].ui, n[2].ui, n[3].ui));
+            break;
          case OPCODE_PROGRAM_UNIFORM_1F:
             CALL_ProgramUniform1f(ctx->Exec, (n[1].ui, n[2].i, n[3].f));
             break;
@@ -9122,6 +9150,12 @@ execute_list(struct gl_context *ctx, GLuint list)
             CALL_UniformBlockBinding(ctx->Exec, (n[1].ui, n[2].ui, n[3].ui));
             break;
 
+         /* GL_EXT_window_rectangles */
+         case OPCODE_WINDOW_RECTANGLES:
+            CALL_WindowRectanglesEXT(
+                  ctx->Exec, (n[1].e, n[2].si, get_pointer(&n[3])));
+            break;
+
          case OPCODE_CONTINUE:
             n = (Node *) get_pointer(&n[1]);
             break;
@@ -9228,15 +9262,15 @@ _mesa_GenLists(GLsizei range)
    /*
     * Make this an atomic operation
     */
-   mtx_lock(&ctx->Shared->Mutex);
+   _mesa_HashLockMutex(ctx->Shared->DisplayList);
 
    base = _mesa_HashFindFreeKeyBlock(ctx->Shared->DisplayList, range);
    if (base) {
       /* reserve the list IDs by with empty/dummy lists */
       GLint i;
       for (i = 0; i < range; i++) {
-         _mesa_HashInsert(ctx->Shared->DisplayList, base + i,
-                          make_list(base + i, 1));
+         _mesa_HashInsertLocked(ctx->Shared->DisplayList, base + i,
+                                make_list(base + i, 1));
       }
    }
 
@@ -9258,7 +9292,7 @@ _mesa_GenLists(GLsizei range)
       }
    }
 
-   mtx_unlock(&ctx->Shared->Mutex);
+   _mesa_HashUnlockMutex(ctx->Shared->DisplayList);
 
    return base;
 }
@@ -9308,13 +9342,16 @@ _mesa_NewList(GLuint name, GLenum mode)
 
    vbo_save_NewList(ctx, name, mode);
 
-   ctx->CurrentDispatch = ctx->Save;
-   _glapi_set_dispatch(ctx->CurrentDispatch);
+   ctx->CurrentServerDispatch = ctx->Save;
+   _glapi_set_dispatch(ctx->CurrentServerDispatch);
+   if (ctx->MarshalExec == NULL) {
+      ctx->CurrentClientDispatch = ctx->CurrentServerDispatch;
+   }
 }
 
 
 /**
- * End definition of current display list. 
+ * End definition of current display list.
  */
 void GLAPIENTRY
 _mesa_EndList(void)
@@ -9336,7 +9373,7 @@ _mesa_EndList(void)
       _mesa_error(ctx, GL_INVALID_OPERATION, "glEndList");
       return;
    }
-   
+
    /* Call before emitting END_OF_LIST, in case the driver wants to
     * emit opcodes itself.
     */
@@ -9364,8 +9401,11 @@ _mesa_EndList(void)
    ctx->ExecuteFlag = GL_TRUE;
    ctx->CompileFlag = GL_FALSE;
 
-   ctx->CurrentDispatch = ctx->Exec;
-   _glapi_set_dispatch(ctx->CurrentDispatch);
+   ctx->CurrentServerDispatch = ctx->Exec;
+   _glapi_set_dispatch(ctx->CurrentServerDispatch);
+   if (ctx->MarshalExec == NULL) {
+      ctx->CurrentClientDispatch = ctx->CurrentServerDispatch;
+   }
 }
 
 
@@ -9400,8 +9440,11 @@ _mesa_CallList(GLuint list)
 
    /* also restore API function pointers to point to "save" versions */
    if (save_compile_flag) {
-      ctx->CurrentDispatch = ctx->Save;
-      _glapi_set_dispatch(ctx->CurrentDispatch);
+      ctx->CurrentServerDispatch = ctx->Save;
+       _glapi_set_dispatch(ctx->CurrentServerDispatch);
+      if (ctx->MarshalExec == NULL) {
+         ctx->CurrentClientDispatch = ctx->CurrentServerDispatch;
+      }
    }
 }
 
@@ -9523,8 +9566,11 @@ _mesa_CallLists(GLsizei n, GLenum type, const GLvoid * lists)
 
    /* also restore API function pointers to point to "save" versions */
    if (save_compile_flag) {
-      ctx->CurrentDispatch = ctx->Save;
-      _glapi_set_dispatch(ctx->CurrentDispatch);
+      ctx->CurrentServerDispatch = ctx->Save;
+      _glapi_set_dispatch(ctx->CurrentServerDispatch);
+      if (ctx->MarshalExec == NULL) {
+         ctx->CurrentClientDispatch = ctx->CurrentServerDispatch;
+      }
    }
 }
 
@@ -9726,7 +9772,7 @@ _mesa_initialize_save_table(const struct gl_context *ctx)
    SET_StencilMaskSeparate(table, save_StencilMaskSeparate);
    SET_StencilOpSeparate(table, save_StencilOpSeparate);
 
-   /* ATI_separate_stencil */ 
+   /* ATI_separate_stencil */
    SET_StencilFuncSeparateATI(table, save_StencilFuncSeparateATI);
 
    /* GL_ARB_imaging */
@@ -9787,13 +9833,6 @@ _mesa_initialize_save_table(const struct gl_context *ctx)
    SET_WindowPos4sMESA(table, save_WindowPos4sMESA);
    SET_WindowPos4svMESA(table, save_WindowPos4svMESA);
 
-   /* 233. GL_NV_vertex_program */
-   /* The following commands DO NOT go into display lists:
-    * AreProgramsResidentNV, IsProgramNV, GenProgramsNV, DeleteProgramsNV,
-    * VertexAttribPointerNV, GetProgram*, GetVertexAttrib*
-    */
-   SET_BindProgramARB(table, save_BindProgramNV);
-
    /* 245. GL_ATI_fragment_shader */
    SET_BindFragmentShaderATI(table, save_BindFragmentShaderATI);
    SET_SetFragmentShaderConstantATI(table, save_SetFragmentShaderConstantATI);
@@ -9838,7 +9877,7 @@ _mesa_initialize_save_table(const struct gl_context *ctx)
    /* ARB 27. GL_ARB_fragment_program */
    /* glVertexAttrib* functions alias the NV ones, handled elsewhere */
    SET_ProgramStringARB(table, save_ProgramStringARB);
-   SET_BindProgramARB(table, save_BindProgramNV);
+   SET_BindProgramARB(table, save_BindProgramARB);
    SET_ProgramEnvParameter4dARB(table, save_ProgramEnvParameter4dARB);
    SET_ProgramEnvParameter4dvARB(table, save_ProgramEnvParameter4dvARB);
    SET_ProgramEnvParameter4fARB(table, save_ProgramEnvParameter4fARB);
@@ -10025,6 +10064,9 @@ _mesa_initialize_save_table(const struct gl_context *ctx)
 
    /* GL_EXT_polygon_offset_clamp */
    SET_PolygonOffsetClampEXT(table, save_PolygonOffsetClampEXT);
+
+   /* GL_EXT_window_rectangles */
+   SET_WindowRectanglesEXT(table, save_WindowRectanglesEXT);
 }
 
 
@@ -10057,12 +10099,13 @@ print_list(struct gl_context *ctx, GLuint list, const char *fname)
 
    if (!islist(ctx, list)) {
       fprintf(f, "%u is not a display list ID\n", list);
-      return;
+      goto out;
    }
 
    dlist = _mesa_lookup_list(ctx, list);
-   if (!dlist)
-      return;
+   if (!dlist) {
+      goto out;
+   }
 
    n = dlist->Head;
 
@@ -10333,7 +10376,7 @@ print_list(struct gl_context *ctx, GLuint list, const char *fname)
                printf
                   ("ERROR IN DISPLAY LIST: opcode = %d, address = %p\n",
                    opcode, (void *) n);
-               return;
+               goto out;
             }
             else {
                fprintf(f, "command %d, %u operands\n", opcode,
@@ -10347,6 +10390,7 @@ print_list(struct gl_context *ctx, GLuint list, const char *fname)
       }
    }
 
+ out:
    fflush(f);
    if (fname)
       fclose(f);
@@ -10434,6 +10478,8 @@ save_vtxfmt_init(GLvertexformat * vfmt)
    vfmt->VertexAttrib3fvARB = save_VertexAttrib3fvARB;
    vfmt->VertexAttrib4fARB = save_VertexAttrib4fARB;
    vfmt->VertexAttrib4fvARB = save_VertexAttrib4fvARB;
+
+   vfmt->PrimitiveRestartNV = save_PrimitiveRestartNV;
 }
 
 

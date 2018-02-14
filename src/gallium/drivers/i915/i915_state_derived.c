@@ -145,7 +145,12 @@ static void calculate_vertex_layout(struct i915_context *i915)
       uint hwtc;
       if (texCoords[i]) {
          hwtc = TEXCOORDFMT_4D;
-         src = draw_find_shader_output(i915->draw, TGSI_SEMANTIC_GENERIC, fs->generic_mapping[i]);
+         if (fs->generic_mapping[i] == I915_SEMANTIC_POS) {
+            src = draw_find_shader_output(i915->draw, TGSI_SEMANTIC_POSITION, 0);
+         }
+         else {
+            src = draw_find_shader_output(i915->draw, TGSI_SEMANTIC_GENERIC, fs->generic_mapping[i]);
+         }
          draw_emit_vertex_attr(&vinfo, EMIT_4F, src);
       }
       else {
@@ -211,6 +216,23 @@ void i915_update_derived(struct i915_context *i915)
    if (I915_DBG_ON(DBG_ATOMS))
       i915_dump_dirty(i915, __FUNCTION__);
 
+   if (!i915->fs) {
+      i915->dirty &= ~(I915_NEW_FS_CONSTANTS | I915_NEW_FS);
+      i915->hardware_dirty &= ~(I915_HW_PROGRAM | I915_HW_CONSTANTS);
+   }
+
+   if (!i915->vs)
+      i915->dirty &= ~I915_NEW_VS;
+
+   if (!i915->blend)
+      i915->dirty &= ~I915_NEW_BLEND;
+
+   if (!i915->rasterizer)
+      i915->dirty &= ~I915_NEW_RASTERIZER;
+
+   if (!i915->depth_stencil)
+      i915->dirty &= ~I915_NEW_DEPTH_STENCIL;
+   
    for (i = 0; atoms[i]; i++)
       if (atoms[i]->dirty & i915->dirty)
          atoms[i]->update(i915);

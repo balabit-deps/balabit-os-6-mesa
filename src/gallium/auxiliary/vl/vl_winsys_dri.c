@@ -46,7 +46,7 @@
 #include "state_tracker/drm_driver.h"
 
 #include "util/u_memory.h"
-#include "util/u_hash.h"
+#include "util/crc32.h"
 #include "util/u_hash_table.h"
 #include "util/u_inlines.h"
 
@@ -248,7 +248,8 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
    template.flags = 0;
 
    tex = scrn->base.pscreen->resource_from_handle(scrn->base.pscreen, &template,
-                                                  &dri2_handle);
+                                                  &dri2_handle,
+                                                  PIPE_HANDLE_USAGE_READ_WRITE);
    free(reply);
 
    return tex;
@@ -325,6 +326,7 @@ vl_dri2_screen_create(Display *display, int screen)
    xcb_dri2_authenticate_cookie_t authenticate_cookie;
    xcb_dri2_authenticate_reply_t *authenticate = NULL;
    xcb_screen_iterator_t s;
+   xcb_screen_t *xcb_screen;
    xcb_generic_error_t *error = NULL;
    char *device_name;
    int fd, device_name_length;
@@ -356,9 +358,11 @@ vl_dri2_screen_create(Display *display, int screen)
       goto free_query;
 
    s = xcb_setup_roots_iterator(xcb_get_setup(scrn->conn));
+   xcb_screen = get_xcb_screen(s, screen);
+   if (!xcb_screen)
+      goto free_query;
 
    driverType = XCB_DRI2_DRIVER_TYPE_DRI;
-#ifdef DRI2DriverPrimeShift
    {
       char *prime = getenv("DRI_PRIME");
       if (prime) {
@@ -370,10 +374,9 @@ vl_dri2_screen_create(Display *display, int screen)
                ((primeid & DRI2DriverPrimeMask) << DRI2DriverPrimeShift);
       }
    }
-#endif
 
    connect_cookie = xcb_dri2_connect_unchecked(scrn->conn,
-                                               get_xcb_screen(s, screen)->root,
+                                               xcb_screen->root,
                                                driverType);
    connect = xcb_dri2_connect_reply(scrn->conn, connect_cookie, NULL);
    if (connect == NULL ||
@@ -395,7 +398,7 @@ vl_dri2_screen_create(Display *display, int screen)
       goto close_fd;
 
    authenticate_cookie = xcb_dri2_authenticate_unchecked(scrn->conn,
-                                                         get_xcb_screen(s, screen)->root,
+                                                         xcb_screen->root,
                                                          magic);
    authenticate = xcb_dri2_authenticate_reply(scrn->conn, authenticate_cookie, NULL);
 
@@ -403,7 +406,7 @@ vl_dri2_screen_create(Display *display, int screen)
       goto free_authenticate;
 
    if (pipe_loader_drm_probe_fd(&scrn->base.dev, fd))
-      scrn->base.pscreen = pipe_loader_create_screen(scrn->base.dev);
+      scrn->base.pscreen = pipe_loader_create_screen(scrn->base.dev, 0);
 
    if (!scrn->base.pscreen)
       goto release_pipe;
@@ -426,13 +429,15 @@ vl_dri2_screen_create(Display *display, int screen)
    return &scrn->base;
 
 release_pipe:
-   if (scrn->base.dev)
+   if (scrn->base.dev) {
       pipe_loader_release(&scrn->base.dev, 1);
-   fd = -1;
+      fd = -1;
+   }
 free_authenticate:
    free(authenticate);
 close_fd:
-   close(fd);
+   if (fd != -1)
+      close(fd);
 free_connect:
    free(connect);
 free_query:

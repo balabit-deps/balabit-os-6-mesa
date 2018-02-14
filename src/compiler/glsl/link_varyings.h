@@ -21,7 +21,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_LINK_VARYINGS_H
 #define GLSL_LINK_VARYINGS_H
 
@@ -98,13 +97,22 @@ public:
    unsigned get_num_outputs() const;
    bool store(struct gl_context *ctx, struct gl_shader_program *prog,
               struct gl_transform_feedback_info *info, unsigned buffer,
-              const unsigned max_outputs) const;
+              unsigned buffer_index, const unsigned max_outputs,
+              bool *explicit_stride, bool has_xfb_qualifiers) const;
    const tfeedback_candidate *find_candidate(gl_shader_program *prog,
                                              hash_table *tfeedback_candidates);
 
    bool is_next_buffer_separator() const
    {
       return this->next_buffer_separator;
+   }
+
+   bool is_varying_written() const
+   {
+      if (this->next_buffer_separator || this->skip_components)
+         return false;
+
+      return this->matched_candidate->toplevel_var->data.assigned;
    }
 
    bool is_varying() const
@@ -122,6 +130,16 @@ public:
       return this->stream_id;
    }
 
+   unsigned get_buffer() const
+   {
+      return this->buffer;
+   }
+
+   unsigned get_offset() const
+   {
+      return this->offset;
+   }
+
    /**
     * The total number of varying components taken up by this variable.  Only
     * valid if assign_location() has been called.
@@ -132,7 +150,7 @@ public:
          return this->size;
       else
          return this->vector_elements * this->matrix_columns * this->size *
-            (this->is_double() ? 2 : 1);
+            (this->is_64bit() ? 2 : 1);
    }
 
    unsigned get_location() const {
@@ -141,7 +159,7 @@ public:
 
 private:
 
-   bool is_double() const
+   bool is_64bit() const
    {
       switch (this->type) {
       case GL_DOUBLE:
@@ -157,6 +175,14 @@ private:
       case GL_DOUBLE_MAT4:
       case GL_DOUBLE_MAT4x2:
       case GL_DOUBLE_MAT4x3:
+      case GL_INT64_ARB:
+      case GL_INT64_VEC2_ARB:
+      case GL_INT64_VEC3_ARB:
+      case GL_INT64_VEC4_ARB:
+      case GL_UNSIGNED_INT64_ARB:
+      case GL_UNSIGNED_INT64_VEC2_ARB:
+      case GL_UNSIGNED_INT64_VEC3_ARB:
+      case GL_UNSIGNED_INT64_VEC4_ARB:
          return true;
       default:
          return false;
@@ -191,6 +217,7 @@ private:
    enum {
       none,
       clip_distance,
+      cull_distance,
       tess_level_outer,
       tess_level_inner,
    } lowered_builtin_array_variable;
@@ -200,6 +227,16 @@ private:
     * variable.  -1 if a location hasn't been assigned yet.
     */
    int location;
+
+   /**
+    * Used to store the buffer assigned by xfb_buffer.
+    */
+   unsigned buffer;
+
+   /**
+    * Used to store the offset assigned by xfb_offset.
+    */
+   unsigned offset;
 
    /**
     * If non-zero, then this variable may be packed along with other variables
@@ -258,42 +295,13 @@ private:
    unsigned stream_id;
 };
 
+bool
+link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
+              struct gl_context *ctx, void *mem_ctx);
 
 void
 cross_validate_outputs_to_inputs(struct gl_shader_program *prog,
-				 gl_shader *producer, gl_shader *consumer);
-
-bool
-parse_tfeedback_decls(struct gl_context *ctx, struct gl_shader_program *prog,
-                      const void *mem_ctx, unsigned num_names,
-                      char **varying_names, tfeedback_decl *decls);
-
-void
-remove_unused_shader_inputs_and_outputs(bool is_separate_shader_object,
-                                        gl_shader *sh,
-                                        enum ir_variable_mode mode);
-
-bool
-store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
-                     unsigned num_tfeedback_decls,
-                     tfeedback_decl *tfeedback_decls);
-
-bool
-assign_varying_locations(struct gl_context *ctx,
-			 void *mem_ctx,
-			 struct gl_shader_program *prog,
-			 gl_shader *producer, gl_shader *consumer,
-                         unsigned num_tfeedback_decls,
-                         tfeedback_decl *tfeedback_decls);
-
-bool
-check_against_output_limit(struct gl_context *ctx,
-                           struct gl_shader_program *prog,
-                           gl_shader *producer);
-
-bool
-check_against_input_limit(struct gl_context *ctx,
-                          struct gl_shader_program *prog,
-                          gl_shader *consumer);
+                                 gl_linked_shader *producer,
+                                 gl_linked_shader *consumer);
 
 #endif /* GLSL_LINK_VARYINGS_H */

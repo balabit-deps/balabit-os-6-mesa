@@ -52,9 +52,8 @@ get_dummy_vertex_shader(void)
    const struct tgsi_token *tokens;
    struct ureg_src src;
    struct ureg_dst dst;
-   unsigned num_tokens;
 
-   ureg = ureg_create(TGSI_PROCESSOR_VERTEX);
+   ureg = ureg_create(PIPE_SHADER_VERTEX);
    if (!ureg)
       return NULL;
 
@@ -63,7 +62,7 @@ get_dummy_vertex_shader(void)
    ureg_MOV(ureg, dst, src);
    ureg_END(ureg);
 
-   tokens = ureg_get_tokens(ureg, &num_tokens);
+   tokens = ureg_get_tokens(ureg, NULL);
 
    ureg_destroy(ureg);
 
@@ -162,7 +161,7 @@ compile_vs(struct svga_context *svga,
 static void
 make_vs_key(struct svga_context *svga, struct svga_compile_key *key)
 {
-   const unsigned shader = PIPE_SHADER_VERTEX;
+   const enum pipe_shader_type shader = PIPE_SHADER_VERTEX;
 
    memset(key, 0, sizeof *key);
 
@@ -264,7 +263,6 @@ compile_passthrough_vs(struct svga_context *svga,
    struct ureg_src src[PIPE_MAX_SHADER_INPUTS];
    struct ureg_dst dst[PIPE_MAX_SHADER_OUTPUTS];
    struct ureg_program *ureg;
-   unsigned num_tokens;
    struct svga_compile_key key;
    enum pipe_error ret;
 
@@ -273,7 +271,7 @@ compile_passthrough_vs(struct svga_context *svga,
 
    num_inputs = fs->base.info.num_inputs;
 
-   ureg = ureg_create(TGSI_PROCESSOR_VERTEX);
+   ureg = ureg_create(PIPE_SHADER_VERTEX);
    if (!ureg)
       return PIPE_ERROR_OUT_OF_MEMORY;
 
@@ -313,7 +311,7 @@ compile_passthrough_vs(struct svga_context *svga,
    ureg_END(ureg);
 
    memset(&new_vs, 0, sizeof(new_vs));
-   new_vs.base.tokens = ureg_get_tokens(ureg, &num_tokens);
+   new_vs.base.tokens = ureg_get_tokens(ureg, NULL);
    tgsi_scan_shader(new_vs.base.tokens, &new_vs.base.info);
 
    memset(&key, 0, sizeof(key));
@@ -346,6 +344,8 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
    enum pipe_error ret = PIPE_OK;
    struct svga_compile_key key;
 
+   SVGA_STATS_TIME_PUSH(svga_sws(svga), SVGA_STATS_TIME_EMITVS);
+
    /* If there is an active geometry shader, and it has stream output
     * defined, then we will skip the stream output from the vertex shader
     */
@@ -353,11 +353,14 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
       /* No GS stream out */
       if (svga_have_vs_streamout(svga)) {
          /* Set VS stream out */
-         svga_set_stream_output(svga, vs->base.stream_output);
+         ret = svga_set_stream_output(svga, vs->base.stream_output);
       }
       else {
          /* turn off stream out */
-         svga_set_stream_output(svga, NULL);
+         ret = svga_set_stream_output(svga, NULL);
+      }
+      if (ret != PIPE_OK) {
+         goto done;
       }
    }
 
@@ -381,7 +384,7 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
             ret = compile_vs(svga, vs, &key, &variant);
          }
          if (ret != PIPE_OK)
-            return ret;
+            goto done;
 
          /* insert the new variant at head of linked list */
          assert(variant);
@@ -395,7 +398,7 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
       if (variant) {
          ret = svga_set_shader(svga, SVGA3D_SHADERTYPE_VS, variant);
          if (ret != PIPE_OK)
-            return ret;
+            goto done;
          svga->rebind.flags.vs = FALSE;
       }
 
@@ -403,7 +406,9 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
       svga->state.hw_draw.vs = variant;
    }
 
-   return PIPE_OK;
+done:
+   SVGA_STATS_TIME_POP(svga_sws(svga));
+   return ret;
 }
 
 struct svga_tracked_state svga_hw_vs = 
