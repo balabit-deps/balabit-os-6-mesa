@@ -52,7 +52,12 @@ swr_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info)
       return;
    }
 
-   /* Update derived state, pass draw info to update function */
+   /* If indexed draw, force vertex validation since index buffer comes
+    * from draw info. */
+   if (info->index_size)
+      ctx->dirty |= SWR_NEW_VERTEX;
+
+   /* Update derived state, pass draw info to update function. */
    swr_update_derived(pipe, info);
 
    swr_update_draw_context(ctx);
@@ -107,7 +112,10 @@ swr_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info)
    }
 
    struct swr_vertex_element_state *velems = ctx->velems;
-   velems->fsState.cutIndex = info->restart_index;
+   if (info->primitive_restart)
+      velems->fsState.cutIndex = info->restart_index;
+   else
+      velems->fsState.cutIndex = 0;
    velems->fsState.bEnableCutIndex = info->primitive_restart;
    velems->fsState.bPartialVertexBuffer = (info->min_index > 0);
 
@@ -295,7 +303,7 @@ swr_store_render_target(struct pipe_context *pipe,
    struct SWR_SURFACE_STATE *renderTarget = &pDC->renderTargets[attachment];
 
    /* Only proceed if there's a valid surface to store to */
-   if (renderTarget->pBaseAddress) {
+   if (renderTarget->xpBaseAddress) {
       swr_update_draw_context(ctx);
       SWR_RECT full_rect =
          {0, 0,
@@ -322,9 +330,9 @@ swr_store_dirty_resource(struct pipe_context *pipe,
       swr_draw_context *pDC = &ctx->swrDC;
       SWR_SURFACE_STATE *renderTargets = pDC->renderTargets;
       for (uint32_t i = 0; i < SWR_NUM_ATTACHMENTS; i++)
-         if (renderTargets[i].pBaseAddress == spr->swr.pBaseAddress ||
-             (spr->secondary.pBaseAddress &&
-              renderTargets[i].pBaseAddress == spr->secondary.pBaseAddress)) {
+         if (renderTargets[i].xpBaseAddress == spr->swr.xpBaseAddress ||
+             (spr->secondary.xpBaseAddress &&
+              renderTargets[i].xpBaseAddress == spr->secondary.xpBaseAddress)) {
             swr_store_render_target(pipe, i, post_tile_state);
 
             /* Mesa thinks depth/stencil are fused, so we'll never get an

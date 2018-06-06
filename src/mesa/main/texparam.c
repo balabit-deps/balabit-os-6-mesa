@@ -174,7 +174,7 @@ get_texobj_by_name(struct gl_context *ctx, GLuint texture, const char *name)
    case GL_TEXTURE_RECTANGLE:
       return texObj;
    default:
-      _mesa_error(ctx, GL_INVALID_ENUM, "%s(target)", name);
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(target)", name);
       return NULL;
    }
 
@@ -622,6 +622,14 @@ set_tex_parameteri(struct gl_context *ctx,
       }
       goto invalid_pname;
 
+   case GL_TEXTURE_TILING_EXT:
+      if (ctx->Extensions.EXT_memory_object) {
+         texObj->TextureTiling = params[0];
+
+         return GL_TRUE;
+      }
+      goto invalid_pname;
+
    default:
       goto invalid_pname;
    }
@@ -777,6 +785,13 @@ set_tex_parameterf(struct gl_context *ctx,
          texObj->Sampler.BorderColor.f[ACOMP] = CLAMP(params[3], 0.0F, 1.0F);
       }
       return GL_TRUE;
+
+   case GL_TEXTURE_TILING_EXT:
+      if (ctx->Extensions.EXT_memory_object) {
+         texObj->TextureTiling = params[0];
+         return GL_TRUE;
+      }
+      goto invalid_pname;
 
    default:
       goto invalid_pname;
@@ -1272,8 +1287,8 @@ _mesa_legal_get_tex_level_parameter_target(struct gl_context *ctx, GLenum target
        * From the OpenGL 3.1 spec:
        * "target may also be TEXTURE_BUFFER, indicating the texture buffer."
        */
-      return (ctx->API == API_OPENGL_CORE && ctx->Version >= 31) ||
-         _mesa_has_OES_texture_buffer(ctx);
+      return (_mesa_is_desktop_gl(ctx) && ctx->Version >= 31) ||
+             _mesa_has_OES_texture_buffer(ctx);
    case GL_TEXTURE_CUBE_MAP_ARRAY:
       return _mesa_has_texture_cube_map_array(ctx);
    }
@@ -2019,6 +2034,12 @@ get_tex_parameterfv(struct gl_context *ctx,
          *params = ENUM_TO_FLOAT(obj->Target);
          break;
 
+      case GL_TEXTURE_TILING_EXT:
+         if (!ctx->Extensions.EXT_memory_object)
+            goto invalid_pname;
+         *params = ENUM_TO_FLOAT(obj->TextureTiling);
+         break;
+
       default:
          goto invalid_pname;
    }
@@ -2251,6 +2272,12 @@ get_tex_parameteriv(struct gl_context *ctx,
          *params = (GLint) obj->Target;
          break;
 
+      case GL_TEXTURE_TILING_EXT:
+         if (!ctx->Extensions.EXT_memory_object)
+            goto invalid_pname;
+         *params = (GLint) obj->TextureTiling;
+         break;
+
       default:
          goto invalid_pname;
    }
@@ -2276,30 +2303,6 @@ get_tex_parameterIiv(struct gl_context *ctx,
       break;
    default:
       get_tex_parameteriv(ctx, obj, pname, params, dsa);
-   }
-}
-
-static void
-get_tex_parameterIuiv(struct gl_context *ctx,
-                      struct gl_texture_object *obj,
-                      GLenum pname, GLuint *params, bool dsa)
-{
-   switch (pname) {
-   case GL_TEXTURE_BORDER_COLOR:
-      COPY_4V(params, obj->Sampler.BorderColor.i);
-      break;
-   default:
-      {
-         GLint ip[4];
-         get_tex_parameteriv(ctx, obj, pname, ip, dsa);
-         params[0] = ip[0];
-         if (pname == GL_TEXTURE_SWIZZLE_RGBA_EXT ||
-             pname == GL_TEXTURE_CROP_RECT_OES) {
-            params[1] = ip[1];
-            params[2] = ip[2];
-            params[3] = ip[3];
-         }
-      }
    }
 }
 
@@ -2355,7 +2358,7 @@ _mesa_GetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params)
    if (!texObj)
       return;
 
-   get_tex_parameterIuiv(ctx, texObj, pname, params, false);
+   get_tex_parameterIiv(ctx, texObj, pname, (GLint *) params, false);
 }
 
 
@@ -2409,5 +2412,5 @@ _mesa_GetTextureParameterIuiv(GLuint texture, GLenum pname, GLuint *params)
    if (!texObj)
       return;
 
-   get_tex_parameterIuiv(ctx, texObj, pname, params, true);
+   get_tex_parameterIiv(ctx, texObj, pname, (GLint *) params, true);
 }

@@ -64,6 +64,16 @@ blorp_surface_reloc(struct blorp_batch *batch, uint32_t ss_offset,
       anv_batch_set_error(&cmd_buffer->batch, result);
 }
 
+static struct blorp_address
+blorp_get_surface_base_address(struct blorp_batch *batch)
+{
+   struct anv_cmd_buffer *cmd_buffer = batch->driver_batch;
+   return (struct blorp_address) {
+      .buffer = &cmd_buffer->device->surface_state_pool.block_pool.bo,
+      .offset = 0,
+   };
+}
+
 static void *
 blorp_alloc_dynamic_state(struct blorp_batch *batch,
                           uint32_t size,
@@ -134,6 +144,7 @@ blorp_alloc_vertex_buffer(struct blorp_batch *batch, uint32_t size,
    *addr = (struct blorp_address) {
       .buffer = &cmd_buffer->device->dynamic_state_pool.block_pool.bo,
       .offset = vb_state.offset,
+      .mocs = cmd_buffer->device->default_mocs,
    };
 
    return vb_state.map;
@@ -207,7 +218,7 @@ genX(blorp_exec)(struct blorp_batch *batch,
 
    blorp_exec(batch, params);
 
-   cmd_buffer->state.vb_dirty = ~0;
-   cmd_buffer->state.dirty = ~0;
+   cmd_buffer->state.gfx.vb_dirty = ~0;
+   cmd_buffer->state.gfx.dirty = ~0;
    cmd_buffer->state.push_constants_dirty = ~0;
 }

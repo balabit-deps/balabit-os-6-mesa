@@ -21,20 +21,17 @@
  * IN THE SOFTWARE.
  */
 
-#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <limits.h>
 #include <assert.h>
-#include <linux/futex.h>
 #include <linux/memfd.h>
-#include <sys/time.h>
 #include <sys/mman.h>
-#include <sys/syscall.h>
 
 #include "anv_private.h"
 
 #include "util/hash_table.h"
+#include "util/simple_mtx.h"
 
 #ifdef HAVE_VALGRIND
 #define VG_NOACCESS_READ(__ptr) ({                       \
@@ -111,25 +108,6 @@ struct anv_mmap_cleanup {
 };
 
 #define ANV_MMAP_CLEANUP_INIT ((struct anv_mmap_cleanup){0})
-
-static inline long
-sys_futex(void *addr1, int op, int val1,
-          struct timespec *timeout, void *addr2, int val3)
-{
-   return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
-}
-
-static inline int
-futex_wake(uint32_t *addr, int count)
-{
-   return sys_futex(addr, FUTEX_WAKE, count, NULL, NULL, 0);
-}
-
-static inline int
-futex_wait(uint32_t *addr, int32_t value)
-{
-   return sys_futex(addr, FUTEX_WAIT, value, NULL, NULL, 0);
-}
 
 #ifndef HAVE_MEMFD_CREATE
 static inline int
@@ -265,11 +243,13 @@ anv_block_pool_expand_range(struct anv_block_pool *pool,
 VkResult
 anv_block_pool_init(struct anv_block_pool *pool,
                     struct anv_device *device,
-                    uint32_t initial_size)
+                    uint32_t initial_size,
+                    uint64_t bo_flags)
 {
    VkResult result;
 
    pool->device = device;
+   pool->bo_flags = bo_flags;
    anv_bo_init(&pool->bo, 0, 0);
 
    pool->fd = memfd_create("block pool", MFD_CLOEXEC);
@@ -363,12 +343,14 @@ anv_block_pool_expand_range(struct anv_block_pool *pool,
               MAP_SHARED | MAP_POPULATE, pool->fd,
               BLOCK_POOL_MEMFD_CENTER - center_bo_offset);
    if (map == MAP_FAILED)
-      return vk_errorf(VK_ERROR_MEMORY_MAP_FAILED, "mmap failed: %m");
+      return vk_errorf(pool->device->instance, pool->device,
+                       VK_ERROR_MEMORY_MAP_FAILED, "mmap failed: %m");
 
    gem_handle = anv_gem_userptr(pool->device, map, size);
    if (gem_handle == 0) {
       munmap(map, size);
-      return vk_errorf(VK_ERROR_TOO_MANY_OBJECTS, "userptr failed: %m");
+      return vk_errorf(pool->device->instance, pool->device,
+                       VK_ERROR_TOO_MANY_OBJECTS, "userptr failed: %m");
    }
 
    cleanup->map = map;
@@ -420,6 +402,7 @@ anv_block_pool_expand_range(struct anv_block_pool *pool,
     * hard work for us.
     */
    anv_bo_init(&pool->bo, gem_handle, size);
+   pool->bo.flags = pool->bo_flags;
    pool->bo.map = map;
 
    return VK_SUCCESS;
@@ -525,20 +508,19 @@ anv_block_pool_grow(struct anv_block_pool *pool, struct anv_block_state *state)
       assert(center_bo_offset >= back_used);
 
       /* Make sure we don't shrink the back end of the pool */
-      if (center_bo_offset < pool->back_state.end)
-         center_bo_offset = pool->back_state.end;
+      if (center_bo_offset < back_required)
+         center_bo_offset = back_required;
 
       /* Make sure that we don't shrink the front end of the pool */
-      if (size - center_bo_offset < pool->state.end)
-         center_bo_offset = size - pool->state.end;
+      if (size - center_bo_offset < front_required)
+         center_bo_offset = size - front_required;
    }
 
    assert(center_bo_offset % PAGE_SIZE == 0);
 
    result = anv_block_pool_expand_range(pool, center_bo_offset, size);
 
-   if (pool->device->instance->physicalDevice.has_exec_async)
-      pool->bo.flags |= EXEC_OBJECT_ASYNC;
+   pool->bo.flags = pool->bo_flags;
 
 done:
    pthread_mutex_unlock(&pool->device->mutex);
@@ -587,7 +569,7 @@ anv_block_pool_alloc_new(struct anv_block_pool *pool,
             futex_wake(&pool_state->end, INT_MAX);
          return state.next;
       } else {
-         futex_wait(&pool_state->end, state.end);
+         futex_wait(&pool_state->end, state.end, NULL);
          continue;
       }
    }
@@ -628,10 +610,12 @@ anv_block_pool_alloc_back(struct anv_block_pool *pool,
 VkResult
 anv_state_pool_init(struct anv_state_pool *pool,
                     struct anv_device *device,
-                    uint32_t block_size)
+                    uint32_t block_size,
+                    uint64_t bo_flags)
 {
    VkResult result = anv_block_pool_init(&pool->block_pool, device,
-                                         block_size * 16);
+                                         block_size * 16,
+                                         bo_flags);
    if (result != VK_SUCCESS)
       return result;
 
@@ -684,7 +668,7 @@ anv_fixed_size_state_pool_alloc_new(struct anv_fixed_size_state_pool *pool,
          futex_wake(&pool->block.end, INT_MAX);
       return offset;
    } else {
-      futex_wait(&pool->block.end, block.end);
+      futex_wait(&pool->block.end, block.end, NULL);
       goto restart;
    }
 }
@@ -973,9 +957,11 @@ struct bo_pool_bo_link {
 };
 
 void
-anv_bo_pool_init(struct anv_bo_pool *pool, struct anv_device *device)
+anv_bo_pool_init(struct anv_bo_pool *pool, struct anv_device *device,
+                 uint64_t bo_flags)
 {
    pool->device = device;
+   pool->bo_flags = bo_flags;
    memset(pool->free_list, 0, sizeof(pool->free_list));
 
    VG(VALGRIND_CREATE_MEMPOOL(pool, 0, false));
@@ -1027,11 +1013,7 @@ anv_bo_pool_alloc(struct anv_bo_pool *pool, struct anv_bo *bo, uint32_t size)
    if (result != VK_SUCCESS)
       return result;
 
-   if (pool->device->instance->physicalDevice.supports_48bit_addresses)
-      new_bo.flags |= EXEC_OBJECT_SUPPORTS_48B_ADDRESS;
-
-   if (pool->device->instance->physicalDevice.has_exec_async)
-      new_bo.flags |= EXEC_OBJECT_ASYNC;
+   new_bo.flags = pool->bo_flags;
 
    assert(new_bo.size == pow2_size);
 
@@ -1106,31 +1088,44 @@ anv_scratch_pool_alloc(struct anv_device *device, struct anv_scratch_pool *pool,
    pthread_mutex_lock(&device->mutex);
 
    __sync_synchronize();
-   if (bo->exists)
+   if (bo->exists) {
+      pthread_mutex_unlock(&device->mutex);
       return &bo->bo;
+   }
 
    const struct anv_physical_device *physical_device =
       &device->instance->physicalDevice;
    const struct gen_device_info *devinfo = &physical_device->info;
 
-   /* WaCSScratchSize:hsw
-    *
-    * Haswell's scratch space address calculation appears to be sparse
-    * rather than tightly packed. The Thread ID has bits indicating which
-    * subslice, EU within a subslice, and thread within an EU it is.
-    * There's a maximum of two slices and two subslices, so these can be
-    * stored with a single bit. Even though there are only 10 EUs per
-    * subslice, this is stored in 4 bits, so there's an effective maximum
-    * value of 16 EUs. Similarly, although there are only 7 threads per EU,
-    * this is stored in a 3 bit number, giving an effective maximum value
-    * of 8 threads per EU.
-    *
-    * This means that we need to use 16 * 8 instead of 10 * 7 for the
-    * number of threads per subslice.
-    */
    const unsigned subslices = MAX2(physical_device->subslice_total, 1);
-   const unsigned scratch_ids_per_subslice =
-      device->info.is_haswell ? 16 * 8 : devinfo->max_cs_threads;
+
+   unsigned scratch_ids_per_subslice;
+   if (devinfo->is_haswell) {
+      /* WaCSScratchSize:hsw
+       *
+       * Haswell's scratch space address calculation appears to be sparse
+       * rather than tightly packed. The Thread ID has bits indicating
+       * which subslice, EU within a subslice, and thread within an EU it
+       * is. There's a maximum of two slices and two subslices, so these
+       * can be stored with a single bit. Even though there are only 10 EUs
+       * per subslice, this is stored in 4 bits, so there's an effective
+       * maximum value of 16 EUs. Similarly, although there are only 7
+       * threads per EU, this is stored in a 3 bit number, giving an
+       * effective maximum value of 8 threads per EU.
+       *
+       * This means that we need to use 16 * 8 instead of 10 * 7 for the
+       * number of threads per subslice.
+       */
+      scratch_ids_per_subslice = 16 * 8;
+   } else if (devinfo->is_cherryview) {
+      /* Cherryview devices have either 6 or 8 EUs per subslice, and each EU
+       * has 7 threads. The 6 EU devices appear to calculate thread IDs as if
+       * it had 8 EUs.
+       */
+      scratch_ids_per_subslice = 8 * 7;
+   } else {
+      scratch_ids_per_subslice = devinfo->max_cs_threads;
+   }
 
    uint32_t max_threads[] = {
       [MESA_SHADER_VERTEX]           = devinfo->max_vs_threads,
@@ -1192,7 +1187,7 @@ anv_bo_cache_init(struct anv_bo_cache *cache)
 
    if (pthread_mutex_init(&cache->mutex, NULL)) {
       _mesa_hash_table_destroy(cache->bo_map, NULL);
-      return vk_errorf(VK_ERROR_OUT_OF_HOST_MEMORY,
+      return vk_errorf(NULL, NULL, VK_ERROR_OUT_OF_HOST_MEMORY,
                        "pthread_mutex_init failed: %m");
    }
 
@@ -1221,7 +1216,7 @@ anv_bo_cache_lookup_locked(struct anv_bo_cache *cache, uint32_t gem_handle)
    return bo;
 }
 
-static struct anv_bo *
+UNUSED static struct anv_bo *
 anv_bo_cache_lookup(struct anv_bo_cache *cache, uint32_t gem_handle)
 {
    pthread_mutex_lock(&cache->mutex);
@@ -1272,12 +1267,9 @@ anv_bo_cache_alloc(struct anv_device *device,
 VkResult
 anv_bo_cache_import(struct anv_device *device,
                     struct anv_bo_cache *cache,
-                    int fd, uint64_t size, struct anv_bo **bo_out)
+                    int fd, struct anv_bo **bo_out)
 {
    pthread_mutex_lock(&cache->mutex);
-
-   /* The kernel is going to give us whole pages anyway */
-   size = align_u64(size, 4096);
 
    uint32_t gem_handle = anv_gem_fd_to_handle(device, fd);
    if (!gem_handle) {
@@ -1287,22 +1279,10 @@ anv_bo_cache_import(struct anv_device *device,
 
    struct anv_cached_bo *bo = anv_bo_cache_lookup_locked(cache, gem_handle);
    if (bo) {
-      if (bo->bo.size != size) {
-         pthread_mutex_unlock(&cache->mutex);
-         return vk_error(VK_ERROR_INVALID_EXTERNAL_HANDLE_KHR);
-      }
       __sync_fetch_and_add(&bo->refcount, 1);
    } else {
-      /* For security purposes, we reject BO imports where the size does not
-       * match exactly.  This prevents a malicious client from passing a
-       * buffer to a trusted client, lying about the size, and telling the
-       * trusted client to try and texture from an image that goes
-       * out-of-bounds.  This sort of thing could lead to GPU hangs or worse
-       * in the trusted client.  The trusted client can protect itself against
-       * this sort of attack but only if it can trust the buffer size.
-       */
-      off_t import_size = lseek(fd, 0, SEEK_END);
-      if (import_size == (off_t)-1 || import_size < size) {
+      off_t size = lseek(fd, 0, SEEK_END);
+      if (size == (off_t)-1) {
          anv_gem_close(device, gem_handle);
          pthread_mutex_unlock(&cache->mutex);
          return vk_error(VK_ERROR_INVALID_EXTERNAL_HANDLE_KHR);
@@ -1324,18 +1304,6 @@ anv_bo_cache_import(struct anv_device *device,
    }
 
    pthread_mutex_unlock(&cache->mutex);
-
-   /* From the Vulkan spec:
-    *
-    *    "Importing memory from a file descriptor transfers ownership of
-    *    the file descriptor from the application to the Vulkan
-    *    implementation. The application must not perform any operations on
-    *    the file descriptor after a successful import."
-    *
-    * If the import fails, we leave the file descriptor open.
-    */
-   close(fd);
-
    *bo_out = &bo->bo;
 
    return VK_SUCCESS;

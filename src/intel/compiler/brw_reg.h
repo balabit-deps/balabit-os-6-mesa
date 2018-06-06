@@ -47,6 +47,7 @@
 #include "main/macros.h"
 #include "program/prog_instruction.h"
 #include "brw_eu_defines.h"
+#include "brw_reg_type.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -202,43 +203,6 @@ brw_mask_for_swizzle(unsigned swz)
    return brw_apply_inv_swizzle_to_mask(swz, ~0);
 }
 
-enum PACKED brw_reg_type {
-   BRW_REGISTER_TYPE_UD = 0,
-   BRW_REGISTER_TYPE_D,
-   BRW_REGISTER_TYPE_UW,
-   BRW_REGISTER_TYPE_W,
-   BRW_REGISTER_TYPE_F,
-
-   /** Non-immediates only: @{ */
-   BRW_REGISTER_TYPE_UB,
-   BRW_REGISTER_TYPE_B,
-   /** @} */
-
-   /** Immediates only: @{ */
-   BRW_REGISTER_TYPE_UV, /* Gen6+ */
-   BRW_REGISTER_TYPE_V,
-   BRW_REGISTER_TYPE_VF,
-   /** @} */
-
-   BRW_REGISTER_TYPE_DF, /* Gen7+ (no immediates until Gen8+) */
-
-   /* Gen8+ */
-   BRW_REGISTER_TYPE_HF,
-   BRW_REGISTER_TYPE_UQ,
-   BRW_REGISTER_TYPE_Q,
-};
-
-unsigned brw_reg_type_to_hw_type(const struct gen_device_info *devinfo,
-                                 enum brw_reg_type type, enum brw_reg_file file);
-
-#define brw_element_size(devinfo, inst, operand)                             \
-   brw_hw_reg_type_to_size(devinfo,                                          \
-                           brw_inst_ ## operand ## _reg_type(devinfo, inst), \
-                           brw_inst_ ## operand ## _reg_file(devinfo, inst))
-unsigned brw_hw_reg_type_to_size(const struct gen_device_info *devinfo,
-                                 unsigned type, enum brw_reg_file file);
-
-const char *brw_reg_type_letters(unsigned brw_reg_type);
 uint32_t brw_swizzle_immediate(enum brw_reg_type type, uint32_t x, unsigned swz);
 
 #define REG_SIZE (8*4)
@@ -322,19 +286,6 @@ type_sz(unsigned type)
       return 1;
    default:
       unreachable("not reached");
-   }
-}
-
-static inline bool
-brw_reg_type_is_floating_point(enum brw_reg_type type)
-{
-   switch (type) {
-   case BRW_REGISTER_TYPE_F:
-   case BRW_REGISTER_TYPE_HF:
-   case BRW_REGISTER_TYPE_DF:
-      return true;
-   default:
-      return false;
    }
 }
 
@@ -646,6 +597,24 @@ brw_imm_f(float f)
    return imm;
 }
 
+/** Construct int64_t immediate register */
+static inline struct brw_reg
+brw_imm_q(int64_t q)
+{
+   struct brw_reg imm = brw_imm_reg(BRW_REGISTER_TYPE_Q);
+   imm.d64 = q;
+   return imm;
+}
+
+/** Construct int64_t immediate register */
+static inline struct brw_reg
+brw_imm_uq(uint64_t uq)
+{
+   struct brw_reg imm = brw_imm_reg(BRW_REGISTER_TYPE_UQ);
+   imm.u64 = uq;
+   return imm;
+}
+
 /** Construct integer immediate register */
 static inline struct brw_reg
 brw_imm_d(int d)
@@ -678,7 +647,7 @@ static inline struct brw_reg
 brw_imm_w(int16_t w)
 {
    struct brw_reg imm = brw_imm_reg(BRW_REGISTER_TYPE_W);
-   imm.d = w | (w << 16);
+   imm.ud = (uint16_t)w | (uint32_t)(uint16_t)w << 16;
    return imm;
 }
 
@@ -805,6 +774,12 @@ brw_address_reg(unsigned subnr)
    return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_ADDRESS, subnr);
 }
 
+static inline struct brw_reg
+brw_tdr_reg(void)
+{
+   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_TDR, 0);
+}
+
 /* If/else instructions break in align16 mode if writemask & swizzle
  * aren't xyzw.  This goes against the convention for other scalar
  * regs:
@@ -839,6 +814,12 @@ brw_notification_reg(void)
                   BRW_HORIZONTAL_STRIDE_0,
                   BRW_SWIZZLE_XXXX,
                   WRITEMASK_X);
+}
+
+static inline struct brw_reg
+brw_cr0_reg(unsigned subnr)
+{
+   return brw_ud1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_CONTROL, subnr);
 }
 
 static inline struct brw_reg

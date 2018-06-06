@@ -707,6 +707,7 @@ svga_create_query(struct pipe_context *pipe,
       }
       break;
    case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       if (svga_have_vgpu10(svga)) {
          sq->svga_type = SVGA3D_QUERYTYPE_OCCLUSIONPREDICATE;
          define_query_vgpu10(svga, sq, sizeof(SVGADXOcclusionPredicateQueryResult));
@@ -750,6 +751,7 @@ svga_create_query(struct pipe_context *pipe,
    case SVGA_QUERY_NUM_CONST_BUF_UPDATES:
    case SVGA_QUERY_NUM_CONST_UPDATES:
    case SVGA_QUERY_NUM_FAILED_ALLOCATIONS:
+   case SVGA_QUERY_NUM_COMMANDS_PER_DRAW:
       break;
    case SVGA_QUERY_FLUSH_TIME:
    case SVGA_QUERY_MAP_BUFFER_TIME:
@@ -789,6 +791,7 @@ svga_destroy_query(struct pipe_context *pipe, struct pipe_query *q)
    switch (sq->type) {
    case PIPE_QUERY_OCCLUSION_COUNTER:
    case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       if (svga_have_vgpu10(svga)) {
          /* make sure to also destroy any associated predicate query */
          if (sq->predicate)
@@ -830,6 +833,7 @@ svga_destroy_query(struct pipe_context *pipe, struct pipe_query *q)
    case SVGA_QUERY_NUM_CONST_BUF_UPDATES:
    case SVGA_QUERY_NUM_CONST_UPDATES:
    case SVGA_QUERY_NUM_FAILED_ALLOCATIONS:
+   case SVGA_QUERY_NUM_COMMANDS_PER_DRAW:
       /* nothing */
       break;
    default:
@@ -864,6 +868,7 @@ svga_begin_query(struct pipe_context *pipe, struct pipe_query *q)
    switch (sq->type) {
    case PIPE_QUERY_OCCLUSION_COUNTER:
    case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       if (svga_have_vgpu10(svga)) {
          ret = begin_query_vgpu10(svga, sq);
          /* also need to start the associated occlusion predicate query */
@@ -942,6 +947,7 @@ svga_begin_query(struct pipe_context *pipe, struct pipe_query *q)
    case SVGA_QUERY_NUM_SURFACE_VIEWS:
    case SVGA_QUERY_NUM_GENERATE_MIPMAP:
    case SVGA_QUERY_NUM_FAILED_ALLOCATIONS:
+   case SVGA_QUERY_NUM_COMMANDS_PER_DRAW:
       /* nothing */
       break;
    default:
@@ -977,6 +983,7 @@ svga_end_query(struct pipe_context *pipe, struct pipe_query *q)
    switch (sq->type) {
    case PIPE_QUERY_OCCLUSION_COUNTER:
    case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       if (svga_have_vgpu10(svga)) {
          ret = end_query_vgpu10(svga, sq);
          /* also need to end the associated occlusion predicate query */
@@ -1055,6 +1062,7 @@ svga_end_query(struct pipe_context *pipe, struct pipe_query *q)
    case SVGA_QUERY_NUM_SURFACE_VIEWS:
    case SVGA_QUERY_NUM_GENERATE_MIPMAP:
    case SVGA_QUERY_NUM_FAILED_ALLOCATIONS:
+   case SVGA_QUERY_NUM_COMMANDS_PER_DRAW:
       /* nothing */
       break;
    default:
@@ -1093,7 +1101,8 @@ svga_get_query_result(struct pipe_context *pipe,
          ret = get_query_result_vgpu9(svga, sq, wait, result);
       }
       break;
-   case PIPE_QUERY_OCCLUSION_PREDICATE: {
+   case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE: {
       if (svga_have_vgpu10(svga)) {
          SVGADXOcclusionPredicateQueryResult occResult;
          ret = get_query_result_vgpu10(svga, sq, wait,
@@ -1190,6 +1199,10 @@ svga_get_query_result(struct pipe_context *pipe,
       break;
    case SVGA_QUERY_NUM_FAILED_ALLOCATIONS:
       vresult->u64 = svgascreen->hud.num_failed_allocations;
+      break;
+   case SVGA_QUERY_NUM_COMMANDS_PER_DRAW:
+      vresult->f = (float) svga->swc->num_commands
+         / (float) svga->swc->num_draw_commands;
       break;
    default:
       assert(!"unexpected query type in svga_get_query_result");

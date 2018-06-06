@@ -125,7 +125,8 @@ target_triplet = @target@
 noinst_PROGRAMS = etnaviv_compiler$(EXEEXT)
 subdir = src/gallium/drivers/etnaviv
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
-am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_gnu_make.m4 \
+am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_compile_flag.m4 \
+	$(top_srcdir)/m4/ax_check_gnu_make.m4 \
 	$(top_srcdir)/m4/ax_check_python_mako_module.m4 \
 	$(top_srcdir)/m4/ax_gcc_builtin.m4 \
 	$(top_srcdir)/m4/ax_gcc_func_attribute.m4 \
@@ -143,13 +144,14 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libetnaviv_la_LIBADD =
-am__objects_1 = etnaviv_asm.lo etnaviv_blend.lo etnaviv_clear_blit.lo \
-	etnaviv_compiler.lo etnaviv_context.lo etnaviv_disasm.lo \
-	etnaviv_emit.lo etnaviv_fence.lo etnaviv_format.lo \
-	etnaviv_query.lo etnaviv_query_sw.lo etnaviv_rasterizer.lo \
-	etnaviv_resource.lo etnaviv_rs.lo etnaviv_screen.lo \
-	etnaviv_shader.lo etnaviv_state.lo etnaviv_surface.lo \
-	etnaviv_texture.lo etnaviv_tiling.lo etnaviv_transfer.lo \
+am__objects_1 = etnaviv_asm.lo etnaviv_blend.lo etnaviv_blt.lo \
+	etnaviv_clear_blit.lo etnaviv_compiler.lo etnaviv_context.lo \
+	etnaviv_disasm.lo etnaviv_emit.lo etnaviv_fence.lo \
+	etnaviv_format.lo etnaviv_query.lo etnaviv_query_hw.lo \
+	etnaviv_query_sw.lo etnaviv_rasterizer.lo etnaviv_resource.lo \
+	etnaviv_rs.lo etnaviv_screen.lo etnaviv_shader.lo \
+	etnaviv_state.lo etnaviv_surface.lo etnaviv_texture.lo \
+	etnaviv_texture_state.lo etnaviv_tiling.lo etnaviv_transfer.lo \
 	etnaviv_uniforms.lo etnaviv_zsa.lo
 am_libetnaviv_la_OBJECTS = $(am__objects_1)
 libetnaviv_la_OBJECTS = $(am_libetnaviv_la_OBJECTS)
@@ -258,6 +260,7 @@ CLOVER_STD_OVERRIDE = @CLOVER_STD_OVERRIDE@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CXX = @CXX@
+CXX11_CXXFLAGS = @CXX11_CXXFLAGS@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
@@ -324,6 +327,7 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
+LD_BUILD_ID = @LD_BUILD_ID@
 LD_NO_UNDEFINED = @LD_NO_UNDEFINED@
 LEX = @LEX@
 LEXLIB = @LEXLIB@
@@ -361,7 +365,7 @@ MSVC2013_COMPAT_CFLAGS = @MSVC2013_COMPAT_CFLAGS@
 MSVC2013_COMPAT_CXXFLAGS = @MSVC2013_COMPAT_CXXFLAGS@
 NINE_MAJOR = @NINE_MAJOR@
 NINE_MINOR = @NINE_MINOR@
-NINE_TINY = @NINE_TINY@
+NINE_PATCH = @NINE_PATCH@
 NINE_VERSION = @NINE_VERSION@
 NM = @NM@
 NMEDIT = @NMEDIT@
@@ -371,9 +375,9 @@ NVVIEUX_CFLAGS = @NVVIEUX_CFLAGS@
 NVVIEUX_LIBS = @NVVIEUX_LIBS@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
-OMX_CFLAGS = @OMX_CFLAGS@
-OMX_LIBS = @OMX_LIBS@
-OMX_LIB_INSTALL_DIR = @OMX_LIB_INSTALL_DIR@
+OMX_BELLAGIO_CFLAGS = @OMX_BELLAGIO_CFLAGS@
+OMX_BELLAGIO_LIBS = @OMX_BELLAGIO_LIBS@
+OMX_BELLAGIO_LIB_INSTALL_DIR = @OMX_BELLAGIO_LIB_INSTALL_DIR@
 OPENCL_LIBNAME = @OPENCL_LIBNAME@
 OPENCL_VERSION = @OPENCL_VERSION@
 OSMESA_LIB = @OSMESA_LIB@
@@ -417,7 +421,6 @@ SSE41_CFLAGS = @SSE41_CFLAGS@
 STRIP = @STRIP@
 SWR_AVX2_CXXFLAGS = @SWR_AVX2_CXXFLAGS@
 SWR_AVX_CXXFLAGS = @SWR_AVX_CXXFLAGS@
-SWR_CXX11_CXXFLAGS = @SWR_CXX11_CXXFLAGS@
 SWR_KNL_CXXFLAGS = @SWR_KNL_CXXFLAGS@
 SWR_SKX_CXXFLAGS = @SWR_SKX_CXXFLAGS@
 VALGRIND_CFLAGS = @VALGRIND_CFLAGS@
@@ -427,6 +430,8 @@ VA_LIBS = @VA_LIBS@
 VA_LIB_INSTALL_DIR = @VA_LIB_INSTALL_DIR@
 VA_MAJOR = @VA_MAJOR@
 VA_MINOR = @VA_MINOR@
+VC5_SIMULATOR_CFLAGS = @VC5_SIMULATOR_CFLAGS@
+VC5_SIMULATOR_LIBS = @VC5_SIMULATOR_LIBS@
 VDPAU_CFLAGS = @VDPAU_CFLAGS@
 VDPAU_LIBS = @VDPAU_LIBS@
 VDPAU_LIB_INSTALL_DIR = @VDPAU_LIB_INSTALL_DIR@
@@ -438,16 +443,19 @@ VISIBILITY_CXXFLAGS = @VISIBILITY_CXXFLAGS@
 VL_CFLAGS = @VL_CFLAGS@
 VL_LIBS = @VL_LIBS@
 VULKAN_ICD_INSTALL_DIR = @VULKAN_ICD_INSTALL_DIR@
-WAYLAND_CFLAGS = @WAYLAND_CFLAGS@
-WAYLAND_LIBS = @WAYLAND_LIBS@
+WAYLAND_CLIENT_CFLAGS = @WAYLAND_CLIENT_CFLAGS@
+WAYLAND_CLIENT_LIBS = @WAYLAND_CLIENT_LIBS@
 WAYLAND_PROTOCOLS_DATADIR = @WAYLAND_PROTOCOLS_DATADIR@
 WAYLAND_SCANNER = @WAYLAND_SCANNER@
 WAYLAND_SCANNER_CFLAGS = @WAYLAND_SCANNER_CFLAGS@
 WAYLAND_SCANNER_LIBS = @WAYLAND_SCANNER_LIBS@
+WAYLAND_SERVER_CFLAGS = @WAYLAND_SERVER_CFLAGS@
+WAYLAND_SERVER_LIBS = @WAYLAND_SERVER_LIBS@
+WNO_OVERRIDE_INIT = @WNO_OVERRIDE_INIT@
 X11_INCLUDES = @X11_INCLUDES@
 XA_MAJOR = @XA_MAJOR@
 XA_MINOR = @XA_MINOR@
-XA_TINY = @XA_TINY@
+XA_PATCH = @XA_PATCH@
 XA_VERSION = @XA_VERSION@
 XCB_DRI2_CFLAGS = @XCB_DRI2_CFLAGS@
 XCB_DRI2_LIBS = @XCB_DRI2_LIBS@
@@ -530,14 +538,19 @@ top_srcdir = @top_srcdir@
 C_SOURCES := \
 	hw/cmdstream.xml.h \
 	hw/common.xml.h \
+	hw/common_3d.xml.h \
 	hw/isa.xml.h \
 	hw/state_3d.xml.h \
+	hw/state_blt.xml.h \
 	hw/state.xml.h \
+	hw/texdesc_3d.xml.h \
 	\
 	etnaviv_asm.c \
 	etnaviv_asm.h \
 	etnaviv_blend.c \
 	etnaviv_blend.h \
+	etnaviv_blt.c \
+	etnaviv_blt.h \
 	etnaviv_clear_blit.c \
 	etnaviv_clear_blit.h \
 	etnaviv_compiler.c \
@@ -556,6 +569,8 @@ C_SOURCES := \
 	etnaviv_internal.h \
 	etnaviv_query.c \
 	etnaviv_query.h \
+	etnaviv_query_hw.c \
+	etnaviv_query_hw.h \
 	etnaviv_query_sw.c \
 	etnaviv_query_sw.h \
 	etnaviv_rasterizer.c \
@@ -574,6 +589,8 @@ C_SOURCES := \
 	etnaviv_surface.h \
 	etnaviv_texture.c \
 	etnaviv_texture.h \
+	etnaviv_texture_state.c \
+	etnaviv_texture_state.h \
 	etnaviv_tiling.c \
 	etnaviv_tiling.h \
 	etnaviv_transfer.c \
@@ -627,6 +644,8 @@ GALLIUM_TARGET_CFLAGS = \
 	-I$(top_srcdir)/src/gallium/auxiliary \
 	-I$(top_srcdir)/src/gallium/drivers \
 	-I$(top_srcdir)/src/gallium/winsys \
+	-I$(top_builddir)/src/util/ \
+	-I$(top_builddir)/src/gallium/drivers/ \
 	$(DEFINES) \
 	$(PTHREAD_CFLAGS) \
 	$(LIBDRM_CFLAGS) \
@@ -662,6 +681,7 @@ etnaviv_compiler_LDADD = \
 	$(GALLIUM_COMMON_LIB_DEPS) \
 	$(ETNAVIV_LIBS)
 
+EXTRA_DIST = meson.build
 all: all-am
 
 .SUFFIXES:
@@ -732,6 +752,7 @@ distclean-compile:
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_asm.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_blend.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_blt.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_clear_blit.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_compiler.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_compiler_cmdline.Po@am__quote@
@@ -741,6 +762,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_fence.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_format.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_query.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_query_hw.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_query_sw.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_rasterizer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_resource.Plo@am__quote@
@@ -750,6 +772,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_state.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_surface.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_texture.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_texture_state.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_tiling.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_transfer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/etnaviv_uniforms.Plo@am__quote@

@@ -465,16 +465,23 @@ fs_visitor::emit_fb_writes()
 }
 
 void
-fs_visitor::setup_uniform_clipplane_values(gl_clip_plane *clip_planes)
+fs_visitor::setup_uniform_clipplane_values()
 {
    const struct brw_vs_prog_key *key =
       (const struct brw_vs_prog_key *) this->key;
+
+   if (key->nr_userclip_plane_consts == 0)
+      return;
+
+   assert(stage_prog_data->nr_params == uniforms);
+   brw_stage_prog_data_add_params(stage_prog_data,
+                                  key->nr_userclip_plane_consts * 4);
 
    for (int i = 0; i < key->nr_userclip_plane_consts; i++) {
       this->userplane[i] = fs_reg(UNIFORM, uniforms);
       for (int j = 0; j < 4; ++j) {
          stage_prog_data->param[uniforms + j] =
-            (gl_constant_value *) &clip_planes[i][j];
+            BRW_PARAM_BUILTIN_CLIP_PLANE(i, j);
       }
       uniforms += 4;
    }
@@ -486,7 +493,7 @@ fs_visitor::setup_uniform_clipplane_values(gl_clip_plane *clip_planes)
  * This does nothing if the shader uses gl_ClipDistance or user clipping is
  * disabled altogether.
  */
-void fs_visitor::compute_clip_distance(gl_clip_plane *clip_planes)
+void fs_visitor::compute_clip_distance()
 {
    struct brw_vue_prog_data *vue_prog_data = brw_vue_prog_data(prog_data);
    const struct brw_vs_prog_key *key =
@@ -518,7 +525,7 @@ void fs_visitor::compute_clip_distance(gl_clip_plane *clip_planes)
    if (outputs[clip_vertex].file == BAD_FILE)
       return;
 
-   setup_uniform_clipplane_values(clip_planes);
+   setup_uniform_clipplane_values();
 
    const fs_builder abld = bld.annotate("user clip distances");
 
@@ -788,14 +795,13 @@ fs_visitor::emit_barrier()
 
    fs_reg payload = fs_reg(VGRF, alloc.allocate(1), BRW_REGISTER_TYPE_UD);
 
-   const fs_builder pbld = bld.exec_all().group(8, 0);
-
    /* Clear the message payload */
-   pbld.MOV(payload, brw_imm_ud(0u));
+   bld.exec_all().group(8, 0).MOV(payload, brw_imm_ud(0u));
 
    /* Copy the barrier id from r0.2 to the message payload reg.2 */
    fs_reg r0_2 = fs_reg(retype(brw_vec1_grf(0, 2), BRW_REGISTER_TYPE_UD));
-   pbld.AND(component(payload, 2), r0_2, brw_imm_ud(barrier_id_mask));
+   bld.exec_all().group(1, 0).AND(component(payload, 2), r0_2,
+                                  brw_imm_ud(barrier_id_mask));
 
    /* Emit a gateway "barrier" message using the payload we set up, followed
     * by a wait instruction.
@@ -866,17 +872,6 @@ fs_visitor::init()
       unreachable("unhandled shader stage");
    }
 
-   if (stage == MESA_SHADER_COMPUTE) {
-      const struct brw_cs_prog_data *cs_prog_data = brw_cs_prog_data(prog_data);
-      unsigned size = cs_prog_data->local_size[0] *
-                      cs_prog_data->local_size[1] *
-                      cs_prog_data->local_size[2];
-      size = DIV_ROUND_UP(size, devinfo->max_cs_threads);
-      min_dispatch_width = size > 16 ? 32 : (size > 8 ? 16 : 8);
-   } else {
-      min_dispatch_width = 8;
-   }
-
    this->max_dispatch_width = 32;
    this->prog_data = this->stage_prog_data;
 
@@ -903,6 +898,7 @@ fs_visitor::init()
 
    this->promoted_constants = 0,
 
+   this->grf_used = 0;
    this->spilled_any_registers = false;
 }
 

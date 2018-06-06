@@ -181,12 +181,33 @@ class BucketManager;
 /////////////////////////////////////////////////////////////////////////
 struct SWR_THREADING_INFO
 {
+    uint32_t    BASE_NUMA_NODE;
+    uint32_t    BASE_CORE;
+    uint32_t    BASE_THREAD;
     uint32_t    MAX_WORKER_THREADS;
     uint32_t    MAX_NUMA_NODES;
     uint32_t    MAX_CORES_PER_NUMA_NODE;
     uint32_t    MAX_THREADS_PER_CORE;
     bool        SINGLE_THREADED;
 };
+
+//////////////////////////////////////////////////////////////////////////
+/// SWR_API_THREADING_INFO
+/// Data used to reserve HW threads for API use
+/// API Threads are reserved from numa nodes / cores used for
+/// SWR Worker threads.  Specifying reserved threads here can reduce
+/// the total number of SWR worker threads.
+/////////////////////////////////////////////////////////////////////////
+struct SWR_API_THREADING_INFO
+{
+    uint32_t numAPIReservedThreads; // Default is 1 if SWR_API_THREADING_INFO is not sent
+    uint32_t bindAPIThread0;        // Default is true if numAPIReservedThreads is > 0,
+                                    // binds thread used in SwrCreateContext to API Reserved
+                                    // thread 0
+    uint32_t numAPIThreadsPerCore;  // 0 - means use all threads per core, else clamp to this number.
+                                    // Independent of KNOB_MAX_THREADS_PER_CORE.
+};
+
 
 //////////////////////////////////////////////////////////////////////////
 /// SWR_CREATECONTEXT_INFO
@@ -213,8 +234,18 @@ struct SWR_CREATECONTEXT_INFO
     // Output: size required memory passed to for SwrSaveState / SwrRestoreState
     size_t  contextSaveSize;
 
+    // ArchRast event manager.
+    HANDLE  hArEventManager;
+
     // Input (optional): Threading info that overrides any set KNOB values.
     SWR_THREADING_INFO* pThreadInfo;
+
+    // Input (optional}: Info for reserving API threads
+    SWR_API_THREADING_INFO* pApiThreadInfo;
+
+    // Input: if set to non-zero value, overrides KNOB value for maximum
+    // number of draws in flight
+    uint32_t MAX_DRAWS_IN_FLIGHT;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -228,6 +259,14 @@ SWR_FUNC(HANDLE, SwrCreateContext,
 /// @param hContext - Handle passed back from SwrCreateContext
 SWR_FUNC(void, SwrDestroyContext,
     HANDLE hContext);
+
+//////////////////////////////////////////////////////////////////////////
+/// @brief Bind current thread to an API reserved HW thread
+/// @param hContext - Handle passed back from SwrCreateContext
+/// @param apiThreadId - index of reserved HW thread to bind to.
+SWR_FUNC(void, SwrBindApiThread,
+    HANDLE hContext,
+    uint32_t apiThreadId);
 
 //////////////////////////////////////////////////////////////////////////
 /// @brief Saves API state associated with hContext
@@ -261,6 +300,13 @@ SWR_FUNC(void, SwrSync,
     uint64_t userData,
     uint64_t userData2,
     uint64_t userData3);
+
+//////////////////////////////////////////////////////////////////////////
+/// @brief Stall cmd. Stalls the backend until all previous work has been completed.
+///        Frontend work can continue to make progress
+/// @param hContext - Handle passed back from SwrCreateContext
+SWR_FUNC(void, SwrStallBE,
+    HANDLE hContext);
 
 //////////////////////////////////////////////////////////////////////////
 /// @brief Blocks until all rendering has been completed.
@@ -697,8 +743,8 @@ SWR_FUNC(void, SwrStoreHotTileToSurface,
 SWR_FUNC(void, SwrStoreHotTileClear,
          SWR_SURFACE_STATE *pDstSurface,
          SWR_RENDERTARGET_ATTACHMENT renderTargetIndex,
-         UINT x,
-         UINT y,
+         uint32_t x,
+         uint32_t y,
          uint32_t renderTargetArrayIndex,
          const float* pClearColor);
 
@@ -706,9 +752,11 @@ struct SWR_INTERFACE
 {
     PFNSwrCreateContext pfnSwrCreateContext;
     PFNSwrDestroyContext pfnSwrDestroyContext;
+    PFNSwrBindApiThread pfnSwrBindApiThread;
     PFNSwrSaveState pfnSwrSaveState;
     PFNSwrRestoreState pfnSwrRestoreState;
     PFNSwrSync pfnSwrSync;
+    PFNSwrStallBE pfnSwrStallBE;
     PFNSwrWaitForIdle pfnSwrWaitForIdle;
     PFNSwrWaitForIdleFE pfnSwrWaitForIdleFE;
     PFNSwrSetVertexBuffers pfnSwrSetVertexBuffers;

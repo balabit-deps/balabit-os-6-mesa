@@ -337,16 +337,6 @@ struct dd_function_table {
                                  GLsizei width, GLsizei height, GLsizei depth,
                                  GLenum format,
                                  GLsizei imageSize, const GLvoid *data);
-
-   /**
-    * Called by glGetCompressedTexImage.
-    */
-   void (*GetCompressedTexSubImage)(struct gl_context *ctx,
-                                    struct gl_texture_image *texImage,
-                                    GLint xoffset, GLint yoffset,
-                                    GLint zoffset, GLsizei width,
-                                    GLsizei height, GLsizei depth,
-                                    GLvoid *data);
    /*@}*/
 
    /**
@@ -425,22 +415,6 @@ struct dd_function_table {
    GLboolean (*TextureView)(struct gl_context *ctx,
                             struct gl_texture_object *texObj,
                             struct gl_texture_object *origTexObj);
-
-   /** Sets the given buffer object as the texture's storage.  The given
-    * texture must have target GL_TEXTURE_1D, GL_TEXTURE_2D,
-    * GL_TEXTURE_RECTANGLE, and GL_TEXTURE_2D_ARRAY; have only a single
-    * mipmap level; be immutable; and must not have any assigned storage.
-    * The format and dimensions of the gl_texture_object will already be
-    * initialized.
-    *
-    * This function is used by the meta PBO texture upload path.
-    */
-   bool (*SetTextureStorageForBufferObject)(struct gl_context *ctx,
-                                            struct gl_texture_object *texObj,
-                                            struct gl_buffer_object *bufferObj,
-                                            uint32_t buffer_offset,
-                                            uint32_t row_stride,
-                                            bool read_only);
 
    /**
     * Map a renderbuffer into user space.
@@ -872,7 +846,7 @@ struct dd_function_table {
     * \name GL_ARB_sync interfaces
     */
    /*@{*/
-   struct gl_sync_object * (*NewSyncObject)(struct gl_context *, GLenum);
+   struct gl_sync_object * (*NewSyncObject)(struct gl_context *);
    void (*FenceSync)(struct gl_context *, struct gl_sync_object *,
                      GLenum, GLbitfield);
    void (*DeleteSyncObject)(struct gl_context *, struct gl_sync_object *);
@@ -1068,6 +1042,96 @@ struct dd_function_table {
    void (*DeleteImageHandle)(struct gl_context *ctx, GLuint64 handle);
    void (*MakeImageHandleResident)(struct gl_context *ctx, GLuint64 handle,
                                    GLenum access, bool resident);
+   /*@}*/
+
+
+   /**
+    * \name GL_EXT_external_objects interface
+    */
+   /*@{*/
+  /**
+    * Called to allocate a new memory object.  Drivers will usually
+    * allocate/return a subclass of gl_memory_object.
+    */
+   struct gl_memory_object * (*NewMemoryObject)(struct gl_context *ctx,
+                                                GLuint name);
+   /**
+    * Called to delete/free a memory object.  Drivers should free the
+    * object and any image data it contains.
+    */
+   void (*DeleteMemoryObject)(struct gl_context *ctx,
+                              struct gl_memory_object *memObj);
+
+   /**
+    * Set the given memory object as the texture's storage.
+    */
+   GLboolean (*SetTextureStorageForMemoryObject)(struct gl_context *ctx,
+                                                 struct gl_texture_object *tex_obj,
+                                                 struct gl_memory_object *mem_obj,
+                                                 GLsizei levels, GLsizei width,
+                                                 GLsizei height, GLsizei depth,
+                                                 GLuint64 offset);
+
+   /**
+    * Use a memory object as the backing data for a buffer object
+    */
+   GLboolean (*BufferDataMem)(struct gl_context *ctx,
+                              GLenum target,
+                              GLsizeiptrARB size,
+                              struct gl_memory_object *memObj,
+                              GLuint64 offset,
+                              GLenum usage,
+                              struct gl_buffer_object *bufObj);
+
+   /**
+    * Fill uuid with an unique identifier for this driver
+    *
+    * uuid must point to GL_UUID_SIZE_EXT bytes of available memory
+    */
+   void (*GetDriverUuid)(struct gl_context *ctx, char *uuid);
+
+   /**
+    * Fill uuid with an unique identifier for the device associated
+    * to this driver
+    *
+    * uuid must point to GL_UUID_SIZE_EXT bytes of available memory
+    */
+   void (*GetDeviceUuid)(struct gl_context *ctx, char *uuid);
+
+   /*@}*/
+
+   /**
+    * \name GL_EXT_external_objects_fd interface
+    */
+   /*@{*/
+   /**
+    * Called to import a memory object. The caller relinquishes ownership
+    * of fd after the call returns.
+    *
+    * Accessing fd after ImportMemoryObjectFd returns results in undefined
+    * behaviour. This is consistent with EXT_external_object_fd.
+    */
+   void (*ImportMemoryObjectFd)(struct gl_context *ctx,
+                                struct gl_memory_object *memObj,
+                                GLuint64 size,
+                                int fd);
+   /*@}*/
+
+   /**
+    * \name GL_ARB_get_program_binary
+    */
+   /*@{*/
+   /**
+    * Calls to retrieve/store a binary serialized copy of the current program.
+    */
+   void (*GetProgramBinaryDriverSHA1)(struct gl_context *ctx, uint8_t *sha1);
+
+   void (*ProgramBinarySerializeDriverBlob)(struct gl_context *ctx,
+                                            struct gl_program *prog);
+
+   void (*ProgramBinaryDeserializeDriverBlob)(struct gl_context *ctx,
+                                              struct gl_shader_program *shProg,
+                                              struct gl_program *prog);
    /*@}*/
 };
 

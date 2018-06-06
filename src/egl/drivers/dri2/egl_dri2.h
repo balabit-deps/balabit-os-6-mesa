@@ -44,7 +44,7 @@
 
 #ifdef HAVE_WAYLAND_PLATFORM
 #include <wayland-client.h>
-#include "wayland-egl-priv.h"
+#include "wayland/wayland-egl/wayland-egl-backend.h"
 /* forward declarations of protocol elements */
 struct zwp_linux_dmabuf_v1;
 #endif
@@ -78,15 +78,6 @@ struct zwp_linux_dmabuf_v1;
 #include "util/u_vector.h"
 
 struct wl_buffer;
-
-struct dri2_egl_driver
-{
-   _EGLDriver base;
-
-   void *handle;
-   _EGLProc (*get_proc_address)(const char *procname);
-   void (*glFlush)(void);
-};
 
 struct dri2_egl_display_vtbl {
    int (*authenticate)(_EGLDisplay *disp, uint32_t id);
@@ -154,6 +145,8 @@ struct dri2_egl_display_vtbl {
                                  EGLuint64KHR *sbc);
 
    __DRIdrawable *(*get_dri_drawable)(_EGLSurface *surf);
+
+   void (*close_screen_notify)(_EGLDisplay *dpy);
 };
 
 struct dri2_egl_display
@@ -171,6 +164,7 @@ struct dri2_egl_display
    const __DRIdri2Extension       *dri2;
    const __DRIswrastExtension     *swrast;
    const __DRI2flushExtension     *flush;
+   const __DRI2flushControlExtension *flush_control;
    const __DRItexBufferExtension  *tex_buffer;
    const __DRIimageExtension      *image;
    const __DRIrobustnessExtension *robustness;
@@ -218,6 +212,8 @@ struct dri2_egl_display
    struct wl_event_queue    *wl_queue;
    struct zwp_linux_dmabuf_v1 *wl_dmabuf;
    struct {
+      struct u_vector        xrgb2101010;
+      struct u_vector        argb2101010;
       struct u_vector        xrgb8888;
       struct u_vector        argb8888;
       struct u_vector        rgb565;
@@ -283,8 +279,10 @@ struct dri2_egl_surface
    struct gbm_dri_surface *gbm_surf;
 #endif
 
+   /* EGL-owned buffers */
+   __DRIbuffer           *local_buffers[__DRI_BUFFER_COUNT];
+
 #if defined(HAVE_WAYLAND_PLATFORM) || defined(HAVE_DRM_PLATFORM)
-   __DRIbuffer           *dri_buffers[__DRI_BUFFER_COUNT];
    struct {
 #ifdef HAVE_WAYLAND_PLATFORM
       struct wl_buffer   *wl_buffer;
@@ -309,9 +307,6 @@ struct dri2_egl_surface
    __DRIimage *dri_image_back;
    __DRIimage *dri_image_front;
 
-   /* EGL-owned buffers */
-   __DRIbuffer           *local_buffers[__DRI_BUFFER_COUNT];
-
    /* Used to record all the buffers created by ANativeWindow and their ages.
     * Usually Android uses at most triple buffers in ANativeWindow
     * so hardcode the number of color_buffers to 3.
@@ -326,6 +321,8 @@ struct dri2_egl_surface
       __DRIimage           *front;
       unsigned int         visual;
 #endif
+   int out_fence_fd;
+   EGLBoolean enable_out_fence;
 };
 
 struct dri2_egl_config
@@ -370,6 +367,9 @@ dri2_load_driver(_EGLDisplay *disp);
 void
 dri2_setup_screen(_EGLDisplay *disp);
 
+void
+dri2_setup_swap_interval(_EGLDisplay *disp, int max_swap_interval);
+
 EGLBoolean
 dri2_load_driver_swrast(_EGLDisplay *disp);
 
@@ -402,20 +402,72 @@ _EGLImage *
 dri2_create_image_dma_buf(_EGLDisplay *disp, _EGLContext *ctx,
                           EGLClientBuffer buffer, const EGLint *attr_list);
 
+#ifdef HAVE_X11_PLATFORM
 EGLBoolean
 dri2_initialize_x11(_EGLDriver *drv, _EGLDisplay *disp);
+void
+dri2_teardown_x11(struct dri2_egl_display *dri2_dpy);
+#else
+static inline EGLBoolean
+dri2_initialize_x11(_EGLDriver *drv, _EGLDisplay *disp)
+{
+   return _eglError(EGL_NOT_INITIALIZED, "X11 platform not built");
+}
+static inline void
+dri2_teardown_x11(struct dri2_egl_display *dri2_dpy) {}
+#endif
 
+#ifdef HAVE_DRM_PLATFORM
 EGLBoolean
 dri2_initialize_drm(_EGLDriver *drv, _EGLDisplay *disp);
+void
+dri2_teardown_drm(struct dri2_egl_display *dri2_dpy);
+#else
+static inline EGLBoolean
+dri2_initialize_drm(_EGLDriver *drv, _EGLDisplay *disp)
+{
+   return _eglError(EGL_NOT_INITIALIZED, "GBM/DRM platform not built");
+}
+static inline void
+dri2_teardown_drm(struct dri2_egl_display *dri2_dpy) {}
+#endif
 
+#ifdef HAVE_WAYLAND_PLATFORM
 EGLBoolean
 dri2_initialize_wayland(_EGLDriver *drv, _EGLDisplay *disp);
+void
+dri2_teardown_wayland(struct dri2_egl_display *dri2_dpy);
+#else
+static inline EGLBoolean
+dri2_initialize_wayland(_EGLDriver *drv, _EGLDisplay *disp)
+{
+   return _eglError(EGL_NOT_INITIALIZED, "Wayland platform not built");
+}
+static inline void
+dri2_teardown_wayland(struct dri2_egl_display *dri2_dpy) {}
+#endif
 
+#ifdef HAVE_ANDROID_PLATFORM
 EGLBoolean
 dri2_initialize_android(_EGLDriver *drv, _EGLDisplay *disp);
+#else
+static inline EGLBoolean
+dri2_initialize_android(_EGLDriver *drv, _EGLDisplay *disp)
+{
+   return _eglError(EGL_NOT_INITIALIZED, "Android platform not built");
+}
+#endif
 
+#ifdef HAVE_SURFACELESS_PLATFORM
 EGLBoolean
 dri2_initialize_surfaceless(_EGLDriver *drv, _EGLDisplay *disp);
+#else
+static inline EGLBoolean
+dri2_initialize_surfaceless(_EGLDriver *drv, _EGLDisplay *disp)
+{
+   return _eglError(EGL_NOT_INITIALIZED, "Surfaceless platform not built");
+}
+#endif
 
 void
 dri2_flush_drawable_for_swapbuffers(_EGLDisplay *disp, _EGLSurface *draw);
@@ -450,5 +502,19 @@ dri2_set_WL_bind_wayland_display(_EGLDriver *drv, _EGLDisplay *disp)
 
 void
 dri2_display_destroy(_EGLDisplay *disp);
+
+__DRIbuffer *
+dri2_egl_surface_alloc_local_buffer(struct dri2_egl_surface *dri2_surf,
+                                    unsigned int att, unsigned int format);
+
+void
+dri2_egl_surface_free_local_buffers(struct dri2_egl_surface *dri2_surf);
+
+EGLBoolean
+dri2_init_surface(_EGLSurface *surf, _EGLDisplay *dpy, EGLint type,
+        _EGLConfig *conf, const EGLint *attrib_list, EGLBoolean enable_out_fence);
+
+void
+dri2_fini_surface(_EGLSurface *surf);
 
 #endif /* EGL_DRI2_INCLUDED */

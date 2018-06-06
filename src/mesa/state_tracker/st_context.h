@@ -110,7 +110,6 @@ struct st_context
    boolean has_shareable_shaders;
    boolean has_half_float_packing;
    boolean has_multi_draw_indirect;
-   boolean has_user_constbuf;
    boolean can_bind_const_buffer_as_vertex;
 
    /**
@@ -129,6 +128,7 @@ struct st_context
    boolean invalidate_on_gl_viewport;
    boolean draw_needs_minmax_index;
    boolean vertex_array_out_of_memory;
+   boolean has_hw_atomics;
 
    /* Some state is contained in constant objects.
     * Other state is just parameter values.
@@ -357,30 +357,6 @@ st_fb_orientation(const struct gl_framebuffer *fb)
    }
 }
 
-
-static inline enum pipe_shader_type
-st_shader_stage_to_ptarget(gl_shader_stage stage)
-{
-   switch (stage) {
-   case MESA_SHADER_VERTEX:
-      return PIPE_SHADER_VERTEX;
-   case MESA_SHADER_FRAGMENT:
-      return PIPE_SHADER_FRAGMENT;
-   case MESA_SHADER_GEOMETRY:
-      return PIPE_SHADER_GEOMETRY;
-   case MESA_SHADER_TESS_CTRL:
-      return PIPE_SHADER_TESS_CTRL;
-   case MESA_SHADER_TESS_EVAL:
-      return PIPE_SHADER_TESS_EVAL;
-   case MESA_SHADER_COMPUTE:
-      return PIPE_SHADER_COMPUTE;
-   default:
-      break;
-   }
-
-   assert(!"should not be reached");
-   return PIPE_SHADER_VERTEX;
-}
 
 static inline bool
 st_user_clip_planes_enabled(struct gl_context *ctx)

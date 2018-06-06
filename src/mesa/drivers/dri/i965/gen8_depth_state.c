@@ -49,7 +49,8 @@ emit_depth_packets(struct brw_context *brw,
                    uint32_t lod,
                    uint32_t min_array_element)
 {
-   uint32_t mocs_wb = brw->gen >= 9 ? SKL_MOCS_WB : BDW_MOCS_WB;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+   uint32_t mocs_wb = devinfo->gen >= 9 ? SKL_MOCS_WB : BDW_MOCS_WB;
 
    /* Skip repeated NULL depth/stencil emits (think 2D rendering). */
    if (!depth_mt && !stencil_mt && brw->no_depth_or_stencil) {
@@ -69,8 +70,7 @@ emit_depth_packets(struct brw_context *brw,
              depthbuffer_format << 18 |
              (depth_mt ? depth_mt->surf.row_pitch - 1 : 0));
    if (depth_mt) {
-      OUT_RELOC64(depth_mt->bo,
-                  I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER, 0);
+      OUT_RELOC64(depth_mt->bo, RELOC_WRITE, 0);
    } else {
       OUT_BATCH(0);
       OUT_BATCH(0);
@@ -95,8 +95,7 @@ emit_depth_packets(struct brw_context *brw,
       BEGIN_BATCH(5);
       OUT_BATCH(GEN7_3DSTATE_HIER_DEPTH_BUFFER << 16 | (5 - 2));
       OUT_BATCH((depth_mt->hiz_buf->pitch - 1) | mocs_wb << 25);
-      OUT_RELOC64(depth_mt->hiz_buf->bo,
-                  I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER, 0);
+      OUT_RELOC64(depth_mt->hiz_buf->bo, RELOC_WRITE, 0);
       OUT_BATCH(depth_mt->hiz_buf->qpitch >> 2);
       ADVANCE_BATCH();
    }
@@ -114,8 +113,7 @@ emit_depth_packets(struct brw_context *brw,
       OUT_BATCH(GEN7_3DSTATE_STENCIL_BUFFER << 16 | (5 - 2));
       OUT_BATCH(HSW_STENCIL_ENABLED | mocs_wb << 22 |
                 (stencil_mt->surf.row_pitch - 1));
-      OUT_RELOC64(stencil_mt->bo,
-                  I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER, 0);
+      OUT_RELOC64(stencil_mt->bo, RELOC_WRITE, 0);
       OUT_BATCH(stencil_mt->surf.array_pitch_el_rows >> 2);
       ADVANCE_BATCH();
    }
@@ -141,6 +139,7 @@ gen8_emit_depth_stencil_hiz(struct brw_context *brw,
                             uint32_t width, uint32_t height,
                             uint32_t tile_x, uint32_t tile_y)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct gl_context *ctx = &brw->ctx;
    struct gl_framebuffer *fb = ctx->DrawBuffer;
    uint32_t surftype;
@@ -181,7 +180,7 @@ gen8_emit_depth_stencil_hiz(struct brw_context *brw,
       break;
    case GL_TEXTURE_1D_ARRAY:
    case GL_TEXTURE_1D:
-      if (brw->gen >= 9) {
+      if (devinfo->gen >= 9) {
          /* WaDisable1DDepthStencil. Skylake+ doesn't support 1D depth
           * textures but it does allow pretending it's a 2D texture
           * instead.
@@ -332,11 +331,9 @@ gen8_write_pma_stall_bits(struct brw_context *brw, uint32_t pma_stall_bits)
                                render_cache_flush);
 
    /* CACHE_MODE_1 is a non-privileged register. */
-   BEGIN_BATCH(3);
-   OUT_BATCH(MI_LOAD_REGISTER_IMM | (3 - 2));
-   OUT_BATCH(GEN7_CACHE_MODE_1);
-   OUT_BATCH(GEN8_HIZ_PMA_MASK_BITS | pma_stall_bits);
-   ADVANCE_BATCH();
+   brw_load_register_imm32(brw, GEN7_CACHE_MODE_1,
+                           GEN8_HIZ_PMA_MASK_BITS |
+                           pma_stall_bits );
 
    /* After the LRI, a PIPE_CONTROL with both the Depth Stall and Depth Cache
     * Flush bits is often necessary.  We do it regardless because it's easier.
@@ -352,9 +349,10 @@ gen8_write_pma_stall_bits(struct brw_context *brw, uint32_t pma_stall_bits)
 static void
 gen8_emit_pma_stall_workaround(struct brw_context *brw)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    uint32_t bits = 0;
 
-   if (brw->gen >= 9)
+   if (devinfo->gen >= 9)
       return;
 
    if (pma_fix_enable(brw))

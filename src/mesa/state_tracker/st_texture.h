@@ -31,6 +31,7 @@
 
 #include "pipe/p_context.h"
 #include "util/u_sampler.h"
+#include "util/simple_mtx.h"
 
 #include "main/mtypes.h"
 
@@ -47,6 +48,29 @@ struct st_texture_image_transfer {
    GLubyte *map; /**< Saved map pointer of the uncompressed transfer. */
 };
 
+
+/**
+ * Container for one context's validated sampler view.
+ */
+struct st_sampler_view {
+   struct pipe_sampler_view *view;
+
+   /** The glsl version of the shader seen during validation */
+   bool glsl130_or_later;
+   /** Derived from the sampler's sRGBDecode state during validation */
+   bool srgb_skip_decode;
+};
+
+
+/**
+ * Container for per-context sampler views of a texture.
+ */
+struct st_sampler_views {
+   struct st_sampler_views *next;
+   uint32_t max;
+   uint32_t count;
+   struct st_sampler_view views[0];
+};
 
 /**
  * Subclass of gl_texure_image.
@@ -70,7 +94,7 @@ struct st_texture_image
     * mapping/unmapping, as well as image copies.
     */
    GLubyte *etc_data;
- };
+};
 
 
 /**
@@ -92,13 +116,34 @@ struct st_texture_object
     */
    struct pipe_resource *pt;
 
-   /* Number of views in sampler_views array */
-   GLuint num_sampler_views;
+   /* Protect modifications of the sampler_views array */
+   simple_mtx_t validate_mutex;
 
-   /* Array of sampler views (one per context) attached to this texture
+   /* Container of sampler views (one per context) attached to this texture
     * object. Created lazily on first binding in context.
+    *
+    * Purely read-only accesses to the current context's own sampler view
+    * require no locking. Another thread may simultaneously replace the
+    * container object in order to grow the array, but the old container will
+    * be kept alive.
+    *
+    * Writing to the container (even for modifying the current context's own
+    * sampler view) always requires taking the validate_mutex to protect against
+    * concurrent container switches.
+    *
+    * NULL'ing another context's sampler view is allowed only while
+    * implementing an API call that modifies the texture: an application which
+    * calls those while simultaneously reading the texture in another context
+    * invokes undefined behavior. (TODO: a dubious violation of this rule is
+    * st_finalize_texture, which is a lazy operation that corresponds to a
+    * texture modification.)
     */
-   struct pipe_sampler_view **sampler_views;
+   struct st_sampler_views *sampler_views;
+
+   /* Old sampler views container objects that have not been freed yet because
+    * other threads/contexts may still be reading from them.
+    */
+   struct st_sampler_views *sampler_views_old;
 
    /* True if this texture comes from the window system. Such a texture
     * cannot be reallocated and the format can only be changed with a sampler
@@ -111,19 +156,23 @@ struct st_texture_object
     */
    enum pipe_format surface_format;
 
+   /* When non-zero, samplers should use this level instead of the level
+    * range specified by the GL state.
+    *
+    * This is used for EGL images, which may correspond to a single level out
+    * of an imported pipe_resources with multiple mip levels.
+    */
+   uint level_override;
+
    /* When non-zero, samplers should use this layer instead of the one
     * specified by the GL state.
     *
-    * This is used for VDPAU interop, where imported pipe_resources may be
-    * array textures (containing layers with different fields) even though the
-    * GL state describes one non-array texture per field.
+    * This is used for EGL images and VDPAU interop, where imported
+    * pipe_resources may be cube, 3D, or array textures (containing layers
+    * with different fields in the case of VDPAU) even though the GL state
+    * describes one non-array texture per field.
     */
    uint layer_override;
-
-   /** The glsl version of the shader seen during the previous validation */
-   bool prev_glsl130_or_later;
-   /** The value of the sampler's sRGBDecode state at the previous validation */
-   GLenum prev_sRGBDecode;
 
     /**
      * Set when the texture images of this texture object might not all be in
@@ -281,6 +330,7 @@ void
 st_convert_sampler(const struct st_context *st,
                    const struct gl_texture_object *texobj,
                    const struct gl_sampler_object *msamp,
+                   float tex_unit_lod_bias,
                    struct pipe_sampler_state *sampler);
 
 void
@@ -291,7 +341,8 @@ st_convert_sampler_from_unit(const struct st_context *st,
 void
 st_update_single_texture(struct st_context *st,
                          struct pipe_sampler_view **sampler_view,
-                         GLuint texUnit, bool glsl130_or_later);
+                         GLuint texUnit, bool glsl130_or_later,
+                         bool ignore_srgb_decode);
 
 void
 st_make_bound_samplers_resident(struct st_context *st,

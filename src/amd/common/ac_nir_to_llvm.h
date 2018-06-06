@@ -30,15 +30,29 @@
 #include "amd_family.h"
 #include "../vulkan/radv_descriptor_set.h"
 #include "ac_shader_info.h"
-#include "shader_enums.h"
+#include "compiler/shader_enums.h"
 struct ac_shader_binary;
 struct ac_shader_config;
 struct nir_shader;
 struct radv_pipeline_layout;
 
+struct ac_llvm_context;
+struct ac_shader_abi;
+
+enum {
+	RADV_ALPHA_ADJUST_NONE = 0,
+	RADV_ALPHA_ADJUST_SNORM = 1,
+	RADV_ALPHA_ADJUST_SINT = 2,
+	RADV_ALPHA_ADJUST_SSCALED = 3,
+};
 
 struct ac_vs_variant_key {
 	uint32_t instance_rate_inputs;
+
+	/* For 2_10_10_10 formats the alpha is handled as unsigned by pre-vega HW.
+	 * so we may need to fix it up. */
+	uint64_t alpha_adjust;
+
 	uint32_t as_es:1;
 	uint32_t as_ls:1;
 	uint32_t export_prim_id:1;
@@ -50,28 +64,38 @@ struct ac_tes_variant_key {
 };
 
 struct ac_tcs_variant_key {
+	struct ac_vs_variant_key vs_key;
 	unsigned primitive_mode;
 	unsigned input_vertices;
+	uint32_t tes_reads_tess_factors:1;
 };
 
 struct ac_fs_variant_key {
 	uint32_t col_format;
+	uint8_t log2_ps_iter_samples;
+	uint8_t log2_num_samples;
 	uint32_t is_int8;
 	uint32_t is_int10;
+	uint32_t multisample : 1;
 };
 
-union ac_shader_variant_key {
-	struct ac_vs_variant_key vs;
-	struct ac_fs_variant_key fs;
-	struct ac_tes_variant_key tes;
-	struct ac_tcs_variant_key tcs;
+struct ac_shader_variant_key {
+	union {
+		struct ac_vs_variant_key vs;
+		struct ac_fs_variant_key fs;
+		struct ac_tes_variant_key tes;
+		struct ac_tcs_variant_key tcs;
+	};
+	bool has_multiview_view_index;
 };
 
 struct ac_nir_compiler_options {
 	struct radv_pipeline_layout *layout;
-	union ac_shader_variant_key key;
+	struct ac_shader_variant_key key;
 	bool unsafe_math;
 	bool supports_spill;
+	bool clamp_shadow_reference;
+	bool dump_preoptir;
 	enum radeon_family family;
 	enum chip_class chip_class;
 };
@@ -87,7 +111,8 @@ enum ac_ud_index {
 	AC_UD_SCRATCH_RING_OFFSETS = 0,
 	AC_UD_PUSH_CONSTANTS = 1,
 	AC_UD_INDIRECT_DESCRIPTOR_SETS = 2,
-	AC_UD_SHADER_START = 3,
+	AC_UD_VIEW_INDEX = 3,
+	AC_UD_SHADER_START = 4,
 	AC_UD_VS_VERTEX_BUFFERS = AC_UD_SHADER_START,
 	AC_UD_VS_BASE_VERTEX_START_INSTANCE,
 	AC_UD_VS_LS_TCS_IN_LAYOUT,
@@ -96,13 +121,13 @@ enum ac_ud_index {
 	AC_UD_PS_MAX_UD,
 	AC_UD_CS_GRID_SIZE = AC_UD_SHADER_START,
 	AC_UD_CS_MAX_UD,
-	AC_UD_GS_VS_RING_STRIDE_ENTRIES = AC_UD_SHADER_START,
+	AC_UD_GS_VS_RING_STRIDE_ENTRIES = AC_UD_VS_MAX_UD,
 	AC_UD_GS_MAX_UD,
-	AC_UD_TCS_OFFCHIP_LAYOUT = AC_UD_SHADER_START,
+	AC_UD_TCS_OFFCHIP_LAYOUT = AC_UD_VS_MAX_UD,
 	AC_UD_TCS_MAX_UD,
 	AC_UD_TES_OFFCHIP_LAYOUT = AC_UD_SHADER_START,
 	AC_UD_TES_MAX_UD,
-	AC_UD_MAX_UD = AC_UD_VS_MAX_UD,
+	AC_UD_MAX_UD = AC_UD_TCS_MAX_UD,
 };
 
 /* descriptor index into scratch ring offsets */
@@ -147,7 +172,7 @@ struct ac_shader_variant_info {
 	unsigned num_input_sgprs;
 	unsigned num_input_vgprs;
 	bool need_indirect_descriptor_sets;
-	union {
+	struct {
 		struct {
 			struct ac_vs_output_info outinfo;
 			struct ac_es_output_info es_info;
@@ -159,7 +184,6 @@ struct ac_shader_variant_info {
 		struct {
 			unsigned num_interp;
 			uint32_t input_mask;
-			unsigned output_mask;
 			uint32_t flat_shaded_mask;
 			bool has_pcoord;
 			bool can_discard;
@@ -168,7 +192,6 @@ struct ac_shader_variant_info {
 			bool writes_sample_mask;
 			bool early_fragment_test;
 			bool writes_memory;
-			bool force_persample;
 			bool prim_id_input;
 			bool layer_input;
 		} fs;
@@ -182,10 +205,9 @@ struct ac_shader_variant_info {
 			unsigned invocations;
 			unsigned gsvs_vertex_size;
 			unsigned max_gsvs_emit_size;
-			bool uses_prim_id;
+			unsigned es_type; /* GFX9: VS or TES */
 		} gs;
 		struct {
-			bool uses_prim_id;
 			unsigned tcs_vertices_out;
 			/* Which outputs are actually written */
 			uint64_t outputs_written;
@@ -201,7 +223,6 @@ struct ac_shader_variant_info {
 			enum gl_tess_spacing spacing;
 			bool ccw;
 			bool point_mode;
-			bool uses_prim_id;
 		} tes;
 	};
 };
@@ -210,7 +231,8 @@ void ac_compile_nir_shader(LLVMTargetMachineRef tm,
                            struct ac_shader_binary *binary,
                            struct ac_shader_config *config,
                            struct ac_shader_variant_info *shader_info,
-                           struct nir_shader *nir,
+                           struct nir_shader *const *nir,
+                           int nir_count,
                            const struct ac_nir_compiler_options *options,
 			   bool dump_shader);
 
@@ -221,5 +243,9 @@ void ac_create_gs_copy_shader(LLVMTargetMachineRef tm,
 			      struct ac_shader_variant_info *shader_info,
 			      const struct ac_nir_compiler_options *options,
 			      bool dump_shader);
+
+struct nir_to_llvm_context;
+void ac_nir_translate(struct ac_llvm_context *ac, struct ac_shader_abi *abi,
+		      struct nir_shader *nir, struct nir_to_llvm_context *nctx);
 
 #endif /* AC_NIR_TO_LLVM_H */

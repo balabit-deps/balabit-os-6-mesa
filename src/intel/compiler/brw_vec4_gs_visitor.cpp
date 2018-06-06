@@ -618,7 +618,6 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
                const nir_shader *src_shader,
                struct gl_program *prog,
                int shader_time_index,
-               unsigned *final_assembly_size,
                char **error_str)
 {
    struct brw_gs_compile c;
@@ -868,7 +867,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
             g.enable_debug(name);
          }
          g.generate_code(v.cfg, 8);
-         return g.get_assembly(final_assembly_size);
+         return  g.get_assembly(&prog_data->base.base.program_size);
       }
    }
 
@@ -890,17 +889,17 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
           * values.
           */
          const unsigned param_count = prog_data->base.base.nr_params;
-         gl_constant_value **param = ralloc_array(NULL, gl_constant_value*,
-                                                  param_count);
+         uint32_t *param = ralloc_array(NULL, uint32_t, param_count);
          memcpy(param, prog_data->base.base.param,
-                sizeof(gl_constant_value*) * param_count);
+                sizeof(uint32_t) * param_count);
 
          if (v.run()) {
             /* Success! Backup is not needed */
             ralloc_free(param);
             return brw_vec4_generate_assembly(compiler, log_data, mem_ctx,
                                               shader, &prog_data->base, v.cfg,
-                                              final_assembly_size);
+                                              &prog_data->base.base.
+                                                  program_size);
          } else {
             /* These variables could be modified by the execution of the GS
              * visitor if it packed the uniforms in the push constant buffer.
@@ -910,7 +909,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
              * FIXME: Could more variables be modified by this execution?
              */
             memcpy(prog_data->base.base.param, param,
-                   sizeof(gl_constant_value*) * param_count);
+                   sizeof(uint32_t) * param_count);
             prog_data->base.base.nr_params = param_count;
             prog_data->base.base.nr_pull_params = 0;
             ralloc_free(param);
@@ -964,7 +963,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    } else {
       ret = brw_vec4_generate_assembly(compiler, log_data, mem_ctx, shader,
                                        &prog_data->base, gs->cfg,
-                                       final_assembly_size);
+                                       &prog_data->base.base.program_size);
    }
 
    delete gs;

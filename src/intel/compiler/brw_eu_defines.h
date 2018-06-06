@@ -148,6 +148,18 @@ enum PACKED brw_horizontal_stride {
    BRW_HORIZONTAL_STRIDE_4 = 3,
 };
 
+enum PACKED gen10_align1_3src_src_horizontal_stride {
+   BRW_ALIGN1_3SRC_SRC_HORIZONTAL_STRIDE_0 = 0,
+   BRW_ALIGN1_3SRC_SRC_HORIZONTAL_STRIDE_1 = 1,
+   BRW_ALIGN1_3SRC_SRC_HORIZONTAL_STRIDE_2 = 2,
+   BRW_ALIGN1_3SRC_SRC_HORIZONTAL_STRIDE_4 = 3,
+};
+
+enum PACKED gen10_align1_3src_dst_horizontal_stride {
+   BRW_ALIGN1_3SRC_DST_HORIZONTAL_STRIDE_1 = 0,
+   BRW_ALIGN1_3SRC_DST_HORIZONTAL_STRIDE_2 = 1,
+};
+
 #define BRW_INSTRUCTION_NORMAL    0
 #define BRW_INSTRUCTION_SATURATE  1
 
@@ -388,6 +400,20 @@ enum opcode {
    SHADER_OPCODE_TYPED_SURFACE_WRITE,
    SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL,
 
+   SHADER_OPCODE_RND_MODE,
+
+   /**
+    * Byte scattered write/read opcodes.
+    *
+    * LOGICAL opcodes are eventually translated to the matching non-LOGICAL
+    * opcode, but instead of taking a single payload blog they expect their
+    * arguments separately as individual sources, like untyped write/read.
+    */
+   SHADER_OPCODE_BYTE_SCATTERED_READ,
+   SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL,
+   SHADER_OPCODE_BYTE_SCATTERED_WRITE,
+   SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL,
+
    SHADER_OPCODE_MEMORY_FENCE,
 
    SHADER_OPCODE_GEN4_SCRATCH_READ,
@@ -425,6 +451,8 @@ enum opcode {
     */
    SHADER_OPCODE_BROADCAST,
 
+   SHADER_OPCODE_GET_BUFFER_SIZE,
+
    VEC4_OPCODE_MOV_BYTES,
    VEC4_OPCODE_PACK_BYTES,
    VEC4_OPCODE_UNPACK_UNIFORM,
@@ -453,7 +481,6 @@ enum opcode {
    FS_OPCODE_VARYING_PULL_CONSTANT_LOAD_GEN4,
    FS_OPCODE_VARYING_PULL_CONSTANT_LOAD_GEN7,
    FS_OPCODE_VARYING_PULL_CONSTANT_LOAD_LOGICAL,
-   FS_OPCODE_GET_BUFFER_SIZE,
    FS_OPCODE_MOV_DISPATCH_TO_FLAGS,
    FS_OPCODE_DISCARD_JUMP,
    FS_OPCODE_SET_SAMPLE_ID,
@@ -469,8 +496,6 @@ enum opcode {
    VS_OPCODE_PULL_CONSTANT_LOAD,
    VS_OPCODE_PULL_CONSTANT_LOAD_GEN7,
    VS_OPCODE_SET_SIMD4X2_HEADER_GEN9,
-
-   VS_OPCODE_GET_BUFFER_SIZE,
 
    VS_OPCODE_UNPACK_FLAGS_SIMD4X2,
 
@@ -819,35 +844,21 @@ enum PACKED brw_reg_file {
    BAD_FILE,
 };
 
-#define BRW_HW_REG_TYPE_UD  0
-#define BRW_HW_REG_TYPE_D   1
-#define BRW_HW_REG_TYPE_UW  2
-#define BRW_HW_REG_TYPE_W   3
-#define BRW_HW_REG_TYPE_F   7
-#define GEN8_HW_REG_TYPE_UQ 8
-#define GEN8_HW_REG_TYPE_Q  9
+enum PACKED gen10_align1_3src_reg_file {
+   BRW_ALIGN1_3SRC_GENERAL_REGISTER_FILE = 0,
+   BRW_ALIGN1_3SRC_IMMEDIATE_VALUE       = 1, /* src0, src2 */
+   BRW_ALIGN1_3SRC_ACCUMULATOR           = 1, /* dest, src1 */
+};
 
-#define BRW_HW_REG_NON_IMM_TYPE_UB  4
-#define BRW_HW_REG_NON_IMM_TYPE_B   5
-#define GEN7_HW_REG_NON_IMM_TYPE_DF 6
-#define GEN8_HW_REG_NON_IMM_TYPE_HF 10
-
-#define BRW_HW_REG_IMM_TYPE_UV  4 /* Gen6+ packed unsigned immediate vector */
-#define BRW_HW_REG_IMM_TYPE_VF  5 /* packed float immediate vector */
-#define BRW_HW_REG_IMM_TYPE_V   6 /* packed int imm. vector; uword dest only */
-#define GEN8_HW_REG_IMM_TYPE_DF 10
-#define GEN8_HW_REG_IMM_TYPE_HF 11
-
-/* SNB adds 3-src instructions (MAD and LRP) that only operate on floats, so
- * the types were implied. IVB adds BFE and BFI2 that operate on doublewords
- * and unsigned doublewords, so a new field is also available in the da3src
- * struct (part of struct brw_instruction.bits1 in brw_structs.h) to select
- * dst and shared-src types. The values are different from BRW_REGISTER_TYPE_*.
+/* CNL adds Align1 support for 3-src instructions. Bit 35 of the instruction
+ * word is "Execution Datatype" which controls whether the instruction operates
+ * on float or integer types. The register arguments have fields that offer
+ * more fine control their respective types.
  */
-#define BRW_3SRC_TYPE_F  0
-#define BRW_3SRC_TYPE_D  1
-#define BRW_3SRC_TYPE_UD 2
-#define BRW_3SRC_TYPE_DF 3
+enum PACKED gen10_align1_3src_exec_type {
+   BRW_ALIGN1_3SRC_EXEC_TYPE_INT   = 0,
+   BRW_ALIGN1_3SRC_EXEC_TYPE_FLOAT = 1,
+};
 
 #define BRW_ARF_NULL                  0x00
 #define BRW_ARF_ADDRESS               0x10
@@ -885,6 +896,13 @@ enum PACKED brw_vertical_stride {
    BRW_VERTICAL_STRIDE_16              = 5,
    BRW_VERTICAL_STRIDE_32              = 6,
    BRW_VERTICAL_STRIDE_ONE_DIMENSIONAL = 0xF,
+};
+
+enum PACKED gen10_align1_3src_vertical_stride {
+   BRW_ALIGN1_3SRC_VERTICAL_STRIDE_0 = 0,
+   BRW_ALIGN1_3SRC_VERTICAL_STRIDE_2 = 1,
+   BRW_ALIGN1_3SRC_VERTICAL_STRIDE_4 = 2,
+   BRW_ALIGN1_3SRC_VERTICAL_STRIDE_8 = 3,
 };
 
 enum PACKED brw_width {
@@ -1232,5 +1250,30 @@ enum brw_message_target {
 
 /* R0 */
 # define GEN7_GS_PAYLOAD_INSTANCE_ID_SHIFT		27
+
+/* CR0.0[5:4] Floating-Point Rounding Modes
+ *  Skylake PRM, Volume 7 Part 1, "Control Register", page 756
+ */
+
+#define BRW_CR0_RND_MODE_MASK     0x30
+#define BRW_CR0_RND_MODE_SHIFT    4
+
+enum PACKED brw_rnd_mode {
+   BRW_RND_MODE_RTNE = 0,  /* Round to Nearest or Even */
+   BRW_RND_MODE_RU = 1,    /* Round Up, toward +inf */
+   BRW_RND_MODE_RD = 2,    /* Round Down, toward -inf */
+   BRW_RND_MODE_RTZ = 3,   /* Round Toward Zero */
+   BRW_RND_MODE_UNSPECIFIED,  /* Unspecified rounding mode */
+};
+
+/* MDC_DS - Data Size Message Descriptor Control Field
+ * Skylake PRM, Volume 2d, page 129
+ *
+ * Specifies the number of Bytes to be read or written per Dword used at
+ * byte_scattered read/write and byte_scaled read/write messages.
+ */
+#define GEN7_BYTE_SCATTERED_DATA_ELEMENT_BYTE     0
+#define GEN7_BYTE_SCATTERED_DATA_ELEMENT_WORD     1
+#define GEN7_BYTE_SCATTERED_DATA_ELEMENT_DWORD    2
 
 #endif /* BRW_EU_DEFINES_H */

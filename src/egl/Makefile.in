@@ -123,11 +123,12 @@ target_triplet = @target@
 @HAVE_DRI3_TRUE@@HAVE_PLATFORM_X11_TRUE@	drivers/dri2/platform_x11_dri3.h
 
 @HAVE_DRI3_TRUE@@HAVE_PLATFORM_X11_TRUE@am__append_5 = $(top_builddir)/src/loader/libloader_dri3_helper.la
-@HAVE_PLATFORM_WAYLAND_TRUE@am__append_6 = $(WAYLAND_CFLAGS)
-@HAVE_PLATFORM_WAYLAND_TRUE@am__append_7 = $(WAYLAND_LIBS) \
+@HAVE_PLATFORM_WAYLAND_TRUE@am__append_6 = $(WAYLAND_CLIENT_CFLAGS) \
+@HAVE_PLATFORM_WAYLAND_TRUE@	$(WAYLAND_SERVER_CFLAGS)
+@HAVE_PLATFORM_WAYLAND_TRUE@am__append_7 = $(WAYLAND_CLIENT_LIBS) \
 @HAVE_PLATFORM_WAYLAND_TRUE@	$(LIBDRM_LIBS) \
 @HAVE_PLATFORM_WAYLAND_TRUE@	$(top_builddir)/src/egl/wayland/wayland-drm/libwayland-drm.la \
-@HAVE_PLATFORM_WAYLAND_TRUE@	$(top_builddir)/src/util/libmesautil.la
+@HAVE_PLATFORM_WAYLAND_TRUE@	$(WAYLAND_SERVER_LIBS)
 @HAVE_PLATFORM_WAYLAND_TRUE@am__append_8 = \
 @HAVE_PLATFORM_WAYLAND_TRUE@	drivers/dri2/platform_wayland.c	\
 @HAVE_PLATFORM_WAYLAND_TRUE@	drivers/dri2/linux-dmabuf-unstable-v1-protocol.c \
@@ -142,9 +143,13 @@ target_triplet = @target@
 @USE_LIBGLVND_TRUE@am__append_15 = \
 @USE_LIBGLVND_TRUE@	$(GLVND_CFLAGS)
 
+
+#TODO: glvnd symbol check
+@USE_LIBGLVND_FALSE@am__append_16 = egl-symbols-check
 subdir = src/egl
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
-am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_gnu_make.m4 \
+am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_compile_flag.m4 \
+	$(top_srcdir)/m4/ax_check_gnu_make.m4 \
 	$(top_srcdir)/m4/ax_check_python_mako_module.m4 \
 	$(top_srcdir)/m4/ax_gcc_builtin.m4 \
 	$(top_srcdir)/m4/ax_gcc_func_attribute.m4 \
@@ -190,7 +195,8 @@ am__uninstall_files_from_dir = { \
 am__installdirs = "$(DESTDIR)$(libdir)" "$(DESTDIR)$(pkgconfigdir)" \
 	"$(DESTDIR)$(vendorjsondir)" "$(DESTDIR)$(egldir)"
 LTLIBRARIES = $(lib_LTLIBRARIES) $(noinst_LTLIBRARIES)
-@USE_LIBGLVND_FALSE@libEGL_la_DEPENDENCIES = libEGL_common.la
+@USE_LIBGLVND_FALSE@libEGL_la_DEPENDENCIES = libEGL_common.la \
+@USE_LIBGLVND_FALSE@	$(top_builddir)/src/mapi/shared-glapi/libglapi.la
 am_libEGL_la_OBJECTS =
 libEGL_la_OBJECTS = $(am_libEGL_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
@@ -207,13 +213,15 @@ am__DEPENDENCIES_1 =
 @HAVE_PLATFORM_WAYLAND_TRUE@	$(am__DEPENDENCIES_1) \
 @HAVE_PLATFORM_WAYLAND_TRUE@	$(am__DEPENDENCIES_1) \
 @HAVE_PLATFORM_WAYLAND_TRUE@	$(top_builddir)/src/egl/wayland/wayland-drm/libwayland-drm.la \
-@HAVE_PLATFORM_WAYLAND_TRUE@	$(top_builddir)/src/util/libmesautil.la
+@HAVE_PLATFORM_WAYLAND_TRUE@	$(am__DEPENDENCIES_1)
 @HAVE_PLATFORM_ANDROID_TRUE@am__DEPENDENCIES_4 =  \
 @HAVE_PLATFORM_ANDROID_TRUE@	$(am__DEPENDENCIES_1)
-libEGL_common_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
+libEGL_common_la_DEPENDENCIES =  \
+	$(top_builddir)/src/util/libmesautil.la $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_2) $(am__append_5) $(am__DEPENDENCIES_3) \
 	$(am__append_9) $(am__DEPENDENCIES_4) \
-	$(top_builddir)/src/loader/libloader.la $(am__DEPENDENCIES_1) \
+	$(top_builddir)/src/loader/libloader.la \
+	$(top_builddir)/src/util/libxmlconfig.la $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 am__libEGL_common_la_SOURCES_DIST = main/eglapi.c main/eglapi.h \
 	main/eglarray.c main/eglarray.h main/eglconfig.c \
@@ -257,7 +265,8 @@ am__objects_10 = $(am__objects_9)
 am_libEGL_common_la_OBJECTS = $(am__objects_1) $(am__objects_2) \
 	$(am__objects_8) $(am__objects_10)
 libEGL_common_la_OBJECTS = $(am_libEGL_common_la_OBJECTS)
-@USE_LIBGLVND_TRUE@libEGL_mesa_la_DEPENDENCIES = libEGL_common.la
+@USE_LIBGLVND_TRUE@libEGL_mesa_la_DEPENDENCIES = libEGL_common.la \
+@USE_LIBGLVND_TRUE@	$(top_builddir)/src/mapi/shared-glapi/libglapi.la
 am__libEGL_mesa_la_SOURCES_DIST = main/eglglvnd.c \
 	main/egldispatchstubs.h main/egldispatchstubs.c \
 	g_egldispatchstubs.c g_egldispatchstubs.h
@@ -541,6 +550,7 @@ CLOVER_STD_OVERRIDE = @CLOVER_STD_OVERRIDE@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CXX = @CXX@
+CXX11_CXXFLAGS = @CXX11_CXXFLAGS@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
@@ -607,6 +617,7 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
+LD_BUILD_ID = @LD_BUILD_ID@
 LD_NO_UNDEFINED = @LD_NO_UNDEFINED@
 LEX = @LEX@
 LEXLIB = @LEXLIB@
@@ -644,7 +655,7 @@ MSVC2013_COMPAT_CFLAGS = @MSVC2013_COMPAT_CFLAGS@
 MSVC2013_COMPAT_CXXFLAGS = @MSVC2013_COMPAT_CXXFLAGS@
 NINE_MAJOR = @NINE_MAJOR@
 NINE_MINOR = @NINE_MINOR@
-NINE_TINY = @NINE_TINY@
+NINE_PATCH = @NINE_PATCH@
 NINE_VERSION = @NINE_VERSION@
 NM = @NM@
 NMEDIT = @NMEDIT@
@@ -654,9 +665,9 @@ NVVIEUX_CFLAGS = @NVVIEUX_CFLAGS@
 NVVIEUX_LIBS = @NVVIEUX_LIBS@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
-OMX_CFLAGS = @OMX_CFLAGS@
-OMX_LIBS = @OMX_LIBS@
-OMX_LIB_INSTALL_DIR = @OMX_LIB_INSTALL_DIR@
+OMX_BELLAGIO_CFLAGS = @OMX_BELLAGIO_CFLAGS@
+OMX_BELLAGIO_LIBS = @OMX_BELLAGIO_LIBS@
+OMX_BELLAGIO_LIB_INSTALL_DIR = @OMX_BELLAGIO_LIB_INSTALL_DIR@
 OPENCL_LIBNAME = @OPENCL_LIBNAME@
 OPENCL_VERSION = @OPENCL_VERSION@
 OSMESA_LIB = @OSMESA_LIB@
@@ -700,7 +711,6 @@ SSE41_CFLAGS = @SSE41_CFLAGS@
 STRIP = @STRIP@
 SWR_AVX2_CXXFLAGS = @SWR_AVX2_CXXFLAGS@
 SWR_AVX_CXXFLAGS = @SWR_AVX_CXXFLAGS@
-SWR_CXX11_CXXFLAGS = @SWR_CXX11_CXXFLAGS@
 SWR_KNL_CXXFLAGS = @SWR_KNL_CXXFLAGS@
 SWR_SKX_CXXFLAGS = @SWR_SKX_CXXFLAGS@
 VALGRIND_CFLAGS = @VALGRIND_CFLAGS@
@@ -710,6 +720,8 @@ VA_LIBS = @VA_LIBS@
 VA_LIB_INSTALL_DIR = @VA_LIB_INSTALL_DIR@
 VA_MAJOR = @VA_MAJOR@
 VA_MINOR = @VA_MINOR@
+VC5_SIMULATOR_CFLAGS = @VC5_SIMULATOR_CFLAGS@
+VC5_SIMULATOR_LIBS = @VC5_SIMULATOR_LIBS@
 VDPAU_CFLAGS = @VDPAU_CFLAGS@
 VDPAU_LIBS = @VDPAU_LIBS@
 VDPAU_LIB_INSTALL_DIR = @VDPAU_LIB_INSTALL_DIR@
@@ -721,16 +733,19 @@ VISIBILITY_CXXFLAGS = @VISIBILITY_CXXFLAGS@
 VL_CFLAGS = @VL_CFLAGS@
 VL_LIBS = @VL_LIBS@
 VULKAN_ICD_INSTALL_DIR = @VULKAN_ICD_INSTALL_DIR@
-WAYLAND_CFLAGS = @WAYLAND_CFLAGS@
-WAYLAND_LIBS = @WAYLAND_LIBS@
+WAYLAND_CLIENT_CFLAGS = @WAYLAND_CLIENT_CFLAGS@
+WAYLAND_CLIENT_LIBS = @WAYLAND_CLIENT_LIBS@
 WAYLAND_PROTOCOLS_DATADIR = @WAYLAND_PROTOCOLS_DATADIR@
 WAYLAND_SCANNER = @WAYLAND_SCANNER@
 WAYLAND_SCANNER_CFLAGS = @WAYLAND_SCANNER_CFLAGS@
 WAYLAND_SCANNER_LIBS = @WAYLAND_SCANNER_LIBS@
+WAYLAND_SERVER_CFLAGS = @WAYLAND_SERVER_CFLAGS@
+WAYLAND_SERVER_LIBS = @WAYLAND_SERVER_LIBS@
+WNO_OVERRIDE_INIT = @WNO_OVERRIDE_INIT@
 X11_INCLUDES = @X11_INCLUDES@
 XA_MAJOR = @XA_MAJOR@
 XA_MINOR = @XA_MINOR@
-XA_TINY = @XA_TINY@
+XA_PATCH = @XA_PATCH@
 XA_VERSION = @XA_VERSION@
 XCB_DRI2_CFLAGS = @XCB_DRI2_CFLAGS@
 XCB_DRI2_LIBS = @XCB_DRI2_LIBS@
@@ -847,9 +862,10 @@ dri2_backend_core_FILES := \
 
 MKDIR_GEN = $(AM_V_at)$(MKDIR_P) $(@D)
 BUILT_SOURCES = g_egldispatchstubs.c g_egldispatchstubs.h
-AM_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src/egl/main \
-	-I$(top_srcdir)/src/gbm/main -I$(top_srcdir)/src $(DEFINES) \
-	$(VISIBILITY_CFLAGS) $(LIBDRM_CFLAGS) $(EGL_CFLAGS) \
+AM_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src/mapi \
+	-I$(top_srcdir)/src/egl/main -I$(top_srcdir)/src/gbm/main \
+	-I$(top_srcdir)/src $(DEFINES) $(VISIBILITY_CFLAGS) \
+	$(LIBDRM_CFLAGS) $(EGL_CFLAGS) \
 	-D_EGL_NATIVE_PLATFORM=$(EGL_NATIVE_PLATFORM) $(am__append_1) \
 	$(am__append_6) $(am__append_12) -I$(top_srcdir)/src/loader \
 	-I$(top_builddir)/src/egl/drivers/dri2 \
@@ -869,10 +885,12 @@ noinst_LTLIBRARIES = libEGL_common.la
 libEGL_common_la_SOURCES = $(LIBEGL_C_FILES) \
 	$(dri2_backend_core_FILES) $(dri2_backend_FILES) \
 	$(dri3_backend_FILES)
-libEGL_common_la_LIBADD = $(EGL_LIB_DEPS) $(am__append_2) \
-	$(am__append_5) $(am__append_7) $(am__append_9) \
-	$(am__append_13) $(top_builddir)/src/loader/libloader.la \
-	$(DLOPEN_LIBS) $(LIBDRM_LIBS) $(CLOCK_LIB)
+libEGL_common_la_LIBADD = $(top_builddir)/src/util/libmesautil.la \
+	$(EGL_LIB_DEPS) $(am__append_2) $(am__append_5) \
+	$(am__append_7) $(am__append_9) $(am__append_13) \
+	$(top_builddir)/src/loader/libloader.la \
+	$(top_builddir)/src/util/libxmlconfig.la $(DLOPEN_LIBS) \
+	$(LIBDRM_LIBS) $(CLOCK_LIB)
 dri2_backend_FILES = $(am__append_3) $(am__append_8) $(am__append_10) \
 	$(am__append_11) $(am__append_14)
 dri3_backend_FILES = $(am__append_4)
@@ -894,7 +912,10 @@ CLEANFILES = $(BUILT_SOURCES)
 @USE_LIBGLVND_TRUE@	g_egldispatchstubs.c \
 @USE_LIBGLVND_TRUE@	g_egldispatchstubs.h
 
-@USE_LIBGLVND_TRUE@libEGL_mesa_la_LIBADD = libEGL_common.la
+@USE_LIBGLVND_TRUE@libEGL_mesa_la_LIBADD = \
+@USE_LIBGLVND_TRUE@	libEGL_common.la \
+@USE_LIBGLVND_TRUE@	$(top_builddir)/src/mapi/shared-glapi/libglapi.la
+
 @USE_LIBGLVND_TRUE@libEGL_mesa_la_LDFLAGS = \
 @USE_LIBGLVND_TRUE@	-no-undefined \
 @USE_LIBGLVND_TRUE@	-version-number 0 \
@@ -903,7 +924,10 @@ CLEANFILES = $(BUILT_SOURCES)
 @USE_LIBGLVND_TRUE@	$(LD_NO_UNDEFINED)
 
 @USE_LIBGLVND_FALSE@libEGL_la_SOURCES = 
-@USE_LIBGLVND_FALSE@libEGL_la_LIBADD = libEGL_common.la
+@USE_LIBGLVND_FALSE@libEGL_la_LIBADD = \
+@USE_LIBGLVND_FALSE@	libEGL_common.la \
+@USE_LIBGLVND_FALSE@	$(top_builddir)/src/mapi/shared-glapi/libglapi.la
+
 @USE_LIBGLVND_FALSE@libEGL_la_LDFLAGS = \
 @USE_LIBGLVND_FALSE@	-no-undefined \
 @USE_LIBGLVND_FALSE@	-version-number 1:0 \
@@ -921,9 +945,7 @@ egl_HEADERS = \
 	$(top_srcdir)/include/EGL/eglmesaext.h \
 	$(top_srcdir)/include/EGL/eglplatform.h
 
-TESTS = egl-symbols-check \
-	egl-entrypoint-check
-
+TESTS = egl-entrypoint-check $(am__append_16)
 EXTRA_DIST = \
 	$(TESTS) \
 	SConscript \
@@ -931,7 +953,8 @@ EXTRA_DIST = \
 	main/egl.def \
 	main/README.txt \
 	$(GLVND_GEN_DEPS) \
-	main/50_mesa.json
+	main/50_mesa.json \
+	meson.build
 
 all: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) all-am
@@ -1398,16 +1421,16 @@ recheck: all
 	        am__force_recheck=am--force-recheck \
 	        TEST_LOGS="$$log_list"; \
 	exit $$?
-egl-symbols-check.log: egl-symbols-check
-	@p='egl-symbols-check'; \
-	b='egl-symbols-check'; \
+egl-entrypoint-check.log: egl-entrypoint-check
+	@p='egl-entrypoint-check'; \
+	b='egl-entrypoint-check'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
 	"$$tst" $(AM_TESTS_FD_REDIRECT)
-egl-entrypoint-check.log: egl-entrypoint-check
-	@p='egl-entrypoint-check'; \
-	b='egl-entrypoint-check'; \
+egl-symbols-check.log: egl-symbols-check
+	@p='egl-symbols-check'; \
+	b='egl-symbols-check'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \

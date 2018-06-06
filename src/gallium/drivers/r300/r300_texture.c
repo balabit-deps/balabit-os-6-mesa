@@ -34,7 +34,6 @@
 #include "util/u_format_s3tc.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-#include "util/u_mm.h"
 
 #include "pipe/p_screen.h"
 
@@ -251,10 +250,6 @@ uint32_t r300_translate_texformat(enum pipe_format format,
 
     /* S3TC formats. */
     if (desc->layout == UTIL_FORMAT_LAYOUT_S3TC) {
-        if (!util_format_s3tc_enabled) {
-            return ~0; /* Unsupported. */
-        }
-
         switch (format) {
             case PIPE_FORMAT_DXT1_RGB:
             case PIPE_FORMAT_DXT1_RGBA:
@@ -1239,7 +1234,6 @@ struct pipe_surface* r300_create_surface_custom(struct pipe_context * ctx,
         surface->base.u.tex.first_layer = surf_tmpl->u.tex.first_layer;
         surface->base.u.tex.last_layer = surf_tmpl->u.tex.last_layer;
 
-        surface->buf = tex->buf;
         surface->buf = tex->buf;
 
         /* Prefer VRAM if there are multiple domains to choose from. */

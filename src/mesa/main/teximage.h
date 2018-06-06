@@ -130,6 +130,14 @@ _mesa_init_teximage_fields(struct gl_context *ctx,
                            GLsizei width, GLsizei height, GLsizei depth,
                            GLint border, GLenum internalFormat,
                            mesa_format format);
+extern void
+_mesa_init_teximage_fields_ms(struct gl_context *ctx,
+                              struct gl_texture_image *img,
+                              GLsizei width, GLsizei height, GLsizei depth,
+                              GLint border, GLenum internalFormat,
+                              mesa_format format,
+                              GLuint numSamples,
+                              GLboolean fixedSampleLocations);
 
 
 extern mesa_format
@@ -157,6 +165,8 @@ extern struct gl_texture_image *
 _mesa_get_tex_image(struct gl_context *ctx, struct gl_texture_object *texObj,
                     GLenum target, GLint level);
 
+mesa_format
+_mesa_get_texbuffer_format(const struct gl_context *ctx, GLenum internalFormat);
 
 /**
  * Return the base-level texture image for the given texture object.
@@ -214,7 +224,8 @@ bool
 _mesa_format_no_online_compression(const struct gl_context *ctx, GLenum format);
 
 GLboolean
-_mesa_is_renderable_texture_format(struct gl_context *ctx, GLenum internalformat);
+_mesa_is_renderable_texture_format(const struct gl_context *ctx,
+                                   GLenum internalformat);
 
 extern void
 _mesa_texture_sub_image(struct gl_context *ctx, GLuint dims,
@@ -225,6 +236,16 @@ _mesa_texture_sub_image(struct gl_context *ctx, GLuint dims,
                         GLsizei width, GLsizei height, GLsizei depth,
                         GLenum format, GLenum type, const GLvoid *pixels,
                         bool dsa);
+
+extern void
+_mesa_texture_storage_ms_memory(struct gl_context *ctx, GLuint dims,
+                                struct gl_texture_object *texObj,
+                                struct gl_memory_object *memObj,
+                                GLenum target, GLsizei samples,
+                                GLenum internalFormat, GLsizei width,
+                                GLsizei height, GLsizei depth,
+                                GLboolean fixedSampleLocations,
+                                GLuint64 offset, const char* func);
 
 bool
 _mesa_is_cube_map_texture(GLenum target);
@@ -318,12 +339,22 @@ _mesa_TexSubImage3D( GLenum target, GLint level,
                      GLenum format, GLenum type,
                      const GLvoid *pixels );
 
+void GLAPIENTRY
+_mesa_TextureSubImage1D_no_error(GLuint texture, GLint level, GLint xoffset,
+                                 GLsizei width, GLenum format, GLenum type,
+                                 const GLvoid *pixels);
+
 extern void GLAPIENTRY
 _mesa_TextureSubImage1D(GLuint texture, GLint level, GLint xoffset,
                         GLsizei width,
                         GLenum format, GLenum type,
                         const GLvoid *pixels);
 
+void GLAPIENTRY
+_mesa_TextureSubImage2D_no_error(GLuint texture, GLint level, GLint xoffset,
+                                 GLint yoffset, GLsizei width, GLsizei height,
+                                 GLenum format, GLenum type,
+                                 const GLvoid *pixels);
 
 extern void GLAPIENTRY
 _mesa_TextureSubImage2D(GLuint texture, GLint level,
@@ -331,6 +362,12 @@ _mesa_TextureSubImage2D(GLuint texture, GLint level,
                         GLsizei width, GLsizei height,
                         GLenum format, GLenum type,
                         const GLvoid *pixels);
+
+void GLAPIENTRY
+_mesa_TextureSubImage3D_no_error(GLuint texture, GLint level, GLint xoffset,
+                                 GLint yoffset, GLint zoffset, GLsizei width,
+                                 GLsizei height, GLsizei depth, GLenum format,
+                                 GLenum type, const GLvoid *pixels);
 
 extern void GLAPIENTRY
 _mesa_TextureSubImage3D(GLuint texture, GLint level,

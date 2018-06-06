@@ -156,7 +156,7 @@ unop("fsign", tfloat, ("bit_size == 64 ? " +
                        "((src0 == 0.0f) ? 0.0f : ((src0 > 0.0f) ? 1.0f : -1.0f))"))
 unop("isign", tint, "(src0 == 0) ? 0 : ((src0 > 0) ? 1 : -1)")
 unop("iabs", tint, "(src0 < 0) ? -src0 : src0")
-unop("fabs", tfloat, "bit_size == 64 ? fabs(src0) : fabsf(src0)")
+unop("fabs", tfloat, "fabs(src0)")
 unop("fsat", tfloat, ("bit_size == 64 ? " +
                       "((src0 > 1.0) ? 1.0 : ((src0 <= 0.0) ? 0.0 : src0)) : " +
                       "((src0 > 1.0f) ? 1.0f : ((src0 <= 0.0f) ? 0.0f : src0))"))
@@ -179,8 +179,15 @@ for src_t in [tint, tuint, tfloat]:
       else:
          bit_sizes = [8, 16, 32, 64]
       for bit_size in bit_sizes:
-         unop_convert("{0}2{1}{2}".format(src_t[0], dst_t[0], bit_size),
-                      dst_t + str(bit_size), src_t, "src0")
+          if bit_size == 16 and dst_t == tfloat and src_t == tfloat:
+              rnd_modes = ['rtne', 'rtz', 'undef']
+              for rnd_mode in rnd_modes:
+                  unop_convert("{0}2{1}{2}_{3}".format(src_t[0], dst_t[0],
+                                                       bit_size, rnd_mode),
+                               dst_t + str(bit_size), src_t, "src0")
+          else:
+              unop_convert("{0}2{1}{2}".format(src_t[0], dst_t[0], bit_size),
+                           dst_t + str(bit_size), src_t, "src0")
 
 # We'll hand-code the to/from bool conversion opcodes.  Because bool doesn't
 # have multiple bit-sizes, we can always infer the size from the other type.
@@ -397,8 +404,8 @@ binop("umul_high", tuint32, commutative,
       "(uint32_t)(((uint64_t) src0 * (uint64_t) src1) >> 32)")
 
 binop("fdiv", tfloat, "", "src0 / src1")
-binop("idiv", tint, "", "src0 / src1")
-binop("udiv", tuint, "", "src0 / src1")
+binop("idiv", tint, "", "src1 == 0 ? 0 : (src0 / src1)")
+binop("udiv", tuint, "", "src1 == 0 ? 0 : (src0 / src1)")
 
 # returns a boolean representing the carry resulting from the addition of
 # the two unsigned arguments.

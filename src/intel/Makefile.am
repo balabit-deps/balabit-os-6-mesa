@@ -33,6 +33,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/gtest/include \
 	-I$(top_builddir)/src/intel \
 	-I$(top_srcdir)/src/intel \
+	-I$(top_srcdir)/include/drm-uapi \
 	-I$(top_srcdir)/src/mapi \
 	-I$(top_srcdir)/src/mesa \
 	-I$(top_srcdir)/src/gallium/auxiliary \
@@ -43,7 +44,7 @@ AM_CPPFLAGS = \
 
 AM_CFLAGS = \
 	$(VISIBILITY_CFLAGS) \
-	-Wno-override-init
+	$(WNO_OVERRIDE_INIT)
 
 AM_CXXFLAGS = \
 	$(VISIBILITY_CXXFLAGS)
@@ -61,7 +62,15 @@ check_PROGRAMS =
 TESTS =
 BUILT_SOURCES =
 CLEANFILES =
-EXTRA_DIST =
+EXTRA_DIST = \
+	blorp/meson.build \
+	common/meson.build \
+	compiler/meson.build \
+	genxml/meson.build \
+	isl/meson.build \
+	tools/meson.build \
+	vulkan/meson.build \
+	meson.build
 
 include Makefile.blorp.am
 include Makefile.common.am

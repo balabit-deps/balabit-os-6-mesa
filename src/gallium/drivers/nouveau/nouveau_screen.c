@@ -8,7 +8,7 @@
 #include "util/u_format_s3tc.h"
 #include "util/u_string.h"
 
-#include "os/os_time.h"
+#include "util/os_time.h"
 
 #include <stdio.h>
 #include <errno.h>
@@ -241,8 +241,6 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    pscreen->fence_finish = nouveau_screen_fence_finish;
 
    nouveau_disk_cache_create(screen);
-
-   util_format_s3tc_init();
 
    screen->lowmem_bindings = PIPE_BIND_GLOBAL; /* gallium limit */
    screen->vidmem_bindings =

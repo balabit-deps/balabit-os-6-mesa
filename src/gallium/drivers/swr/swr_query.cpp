@@ -23,7 +23,7 @@
 
 #include "pipe/p_defines.h"
 #include "util/u_memory.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 #include "swr_context.h"
 #include "swr_fence.h"
 #include "swr_query.h"
@@ -94,6 +94,7 @@ swr_get_query_result(struct pipe_context *pipe,
    switch (pq->type) {
    /* Booleans */
    case PIPE_QUERY_OCCLUSION_PREDICATE:
+   case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       result->b = pq->result.core.DepthPassCount != 0;
       break;
    case PIPE_QUERY_GPU_FINISHED:

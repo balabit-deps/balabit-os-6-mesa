@@ -985,12 +985,15 @@ svga_texture_create(struct pipe_screen *screen,
    tex->key.arraySize = 1;
    tex->key.numFaces = 1;
 
-   /* single sample texture can be treated as non-multisamples texture */
-   tex->key.sampleCount = template->nr_samples > 1 ? template->nr_samples : 0;
-
-   if (template->nr_samples > 1) {
+   /* nr_samples=1 must be treated as a non-multisample texture */
+   if (tex->b.b.nr_samples == 1) {
+      tex->b.b.nr_samples = 0;
+   }
+   else if (tex->b.b.nr_samples > 1) {
       tex->key.flags |= SVGA3D_SURFACE_MASKABLE_ANTIALIAS;
    }
+
+   tex->key.sampleCount = tex->b.b.nr_samples;
 
    if (svgascreen->sws->have_vgpu10) {
       switch (template->target) {
@@ -1329,7 +1332,7 @@ boolean
 svga_texture_transfer_map_upload_create(struct svga_context *svga)
 {
    svga->tex_upload = u_upload_create(&svga->pipe, TEX_UPLOAD_DEFAULT_SIZE,
-                                      0, PIPE_USAGE_STAGING);
+                                      0, PIPE_USAGE_STAGING, 0);
    return svga->tex_upload != NULL;
 }
 

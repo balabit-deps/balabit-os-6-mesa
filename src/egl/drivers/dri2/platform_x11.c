@@ -40,6 +40,7 @@
 #endif
 #include <sys/types.h>
 #include <sys/stat.h>
+#include "util/debug.h"
 #include "util/macros.h"
 
 #include "egl_dri2.h"
@@ -74,6 +75,7 @@ swrastCreateDrawable(struct dri2_egl_display * dri2_dpy,
    xcb_create_gc(dri2_dpy->conn, dri2_surf->swapgc, dri2_surf->drawable, mask, valgc);
    switch (dri2_surf->depth) {
       case 32:
+      case 30:
       case 24:
          dri2_surf->bytes_per_pixel = 4;
          break;
@@ -99,8 +101,8 @@ swrastDestroyDrawable(struct dri2_egl_display * dri2_dpy,
    xcb_free_gc(dri2_dpy->conn, dri2_surf->swapgc);
 }
 
-static void
-swrastGetDrawableInfo(__DRIdrawable * draw,
+static bool
+x11_get_drawable_info(__DRIdrawable * draw,
                       int *x, int *y, int *w, int *h,
                       void *loaderPrivate)
 {
@@ -110,14 +112,15 @@ swrastGetDrawableInfo(__DRIdrawable * draw,
    xcb_get_geometry_cookie_t cookie;
    xcb_get_geometry_reply_t *reply;
    xcb_generic_error_t *error;
+   bool ret;
 
-   *x = *y = *w = *h = 0;
    cookie = xcb_get_geometry (dri2_dpy->conn, dri2_surf->drawable);
    reply = xcb_get_geometry_reply (dri2_dpy->conn, cookie, &error);
    if (reply == NULL)
-      return;
+      return false;
 
    if (error != NULL) {
+      ret = false;
       _eglLog(_EGL_WARNING, "error in xcb_get_geometry");
       free(error);
    } else {
@@ -125,8 +128,19 @@ swrastGetDrawableInfo(__DRIdrawable * draw,
       *y = reply->y;
       *w = reply->width;
       *h = reply->height;
+      ret = true;
    }
    free(reply);
+   return ret;
+}
+
+static void
+swrastGetDrawableInfo(__DRIdrawable * draw,
+                      int *x, int *y, int *w, int *h,
+                      void *loaderPrivate)
+{
+   *x = *y = *w = *h = 0;
+   x11_get_drawable_info(draw, x, y, w, h, loaderPrivate);
 }
 
 static void
@@ -210,11 +224,7 @@ dri2_x11_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
    xcb_get_geometry_cookie_t cookie;
    xcb_get_geometry_reply_t *reply;
    xcb_generic_error_t *error;
-   xcb_drawable_t drawable;
    const __DRIconfig *config;
-
-   STATIC_ASSERT(sizeof(uintptr_t) == sizeof(native_surface));
-   drawable = (uintptr_t) native_surface;
 
    (void) drv;
 
@@ -224,7 +234,7 @@ dri2_x11_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
       return NULL;
    }
    
-   if (!_eglInitSurface(&dri2_surf->base, disp, type, conf, attrib_list))
+   if (!dri2_init_surface(&dri2_surf->base, disp, type, conf, attrib_list, false))
       goto cleanup_surf;
 
    dri2_surf->region = XCB_NONE;
@@ -234,14 +244,8 @@ dri2_x11_create_surface(_EGLDriver *drv, _EGLDisplay *disp, EGLint type,
                        dri2_surf->drawable, dri2_dpy->screen->root,
 			dri2_surf->base.Width, dri2_surf->base.Height);
    } else {
-      if (!drawable) {
-         if (type == EGL_WINDOW_BIT)
-            _eglError(EGL_BAD_NATIVE_WINDOW, "dri2_create_surface");
-         else
-            _eglError(EGL_BAD_NATIVE_PIXMAP, "dri2_create_surface");
-         goto cleanup_surf;
-      }
-      dri2_surf->drawable = drawable;
+      STATIC_ASSERT(sizeof(uintptr_t) == sizeof(native_surface));
+      dri2_surf->drawable = (uintptr_t) native_surface;
    }
 
    config = dri2_get_dri_config(dri2_conf, type,
@@ -369,7 +373,7 @@ dri2_x11_create_pbuffer_surface(_EGLDriver *drv, _EGLDisplay *disp,
                                 _EGLConfig *conf, const EGLint *attrib_list)
 {
    return dri2_x11_create_surface(drv, disp, EGL_PBUFFER_BIT, conf,
-                                  XCB_WINDOW_NONE, attrib_list);
+                                  NULL, attrib_list);
 }
 
 static EGLBoolean
@@ -392,6 +396,7 @@ dri2_x11_destroy_surface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
    if (surf->Type == EGL_PBUFFER_BIT)
       xcb_free_pixmap (dri2_dpy->conn, dri2_surf->drawable);
 
+   dri2_fini_surface(surf);
    free(surf);
 
    return EGL_TRUE;
@@ -412,15 +417,14 @@ dri2_query_surface(_EGLDriver *drv, _EGLDisplay *dpy,
 {
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(dpy);
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
-   int x, y, w = -1, h = -1;
+   int x, y, w, h;
 
    __DRIdrawable *drawable = dri2_dpy->vtbl->get_dri_drawable(surf);
 
    switch (attribute) {
    case EGL_WIDTH:
    case EGL_HEIGHT:
-      swrastGetDrawableInfo(drawable, &x, &y, &w, &h, dri2_surf);
-      if (w != -1 && h != -1) {
+      if (x11_get_drawable_info(drawable, &x, &y, &w, &h, dri2_surf)) {
          surf->Width = w;
          surf->Height = h;
       }
@@ -701,7 +705,6 @@ dri2_x11_connect(struct dri2_egl_display *dri2_dpy)
 
    if (dri2_dpy->driver_name == NULL) {
       close(dri2_dpy->fd);
-      free(dri2_dpy->driver_name);
       free(connect);
       return EGL_FALSE;
    }
@@ -780,13 +783,14 @@ dri2_x11_add_configs_for_visuals(struct dri2_egl_display *dri2_dpy,
                   config_count++;
 
             /* Allow a 24-bit RGB visual to match a 32-bit RGBA EGLConfig.
+             * Ditto for 30-bit RGB visuals to match a 32-bit RGBA EGLConfig.
              * Otherwise it will only match a 32-bit RGBA visual.  On a
              * composited window manager on X11, this will make all of the
              * EGLConfigs with destination alpha get blended by the
              * compositor.  This is probably not what the application
              * wants... especially on drivers that only have 32-bit RGBA
              * EGLConfigs! */
-            if (d.data->depth == 24) {
+            if (d.data->depth == 24 || d.data->depth == 30) {
                rgba_masks[3] =
                   ~(rgba_masks[0] | rgba_masks[1] | rgba_masks[2]);
                dri2_conf = dri2_add_config(disp, config, config_count + 1,
@@ -860,19 +864,22 @@ dri2_x11_swap_buffers_msc(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *draw,
    if (draw->Type == EGL_PIXMAP_BIT || draw->Type == EGL_PBUFFER_BIT)
       return 0;
 
-   if (draw->SwapBehavior == EGL_BUFFER_PRESERVED || !dri2_dpy->swap_available)
-      return dri2_copy_region(drv, disp, draw, dri2_surf->region) ? 0 : -1;
+   if (draw->SwapBehavior == EGL_BUFFER_PRESERVED || !dri2_dpy->swap_available) {
+      swap_count = dri2_copy_region(drv, disp, draw, dri2_surf->region) ? 0 : -1;
+   } else {
+      dri2_flush_drawable_for_swapbuffers(disp, draw);
 
-   dri2_flush_drawable_for_swapbuffers(disp, draw);
+      cookie = xcb_dri2_swap_buffers_unchecked(dri2_dpy->conn,
+                                               dri2_surf->drawable, msc_hi,
+                                               msc_lo, divisor_hi, divisor_lo,
+                                               remainder_hi, remainder_lo);
 
-   cookie = xcb_dri2_swap_buffers_unchecked(dri2_dpy->conn, dri2_surf->drawable,
-                  msc_hi, msc_lo, divisor_hi, divisor_lo, remainder_hi, remainder_lo);
+      reply = xcb_dri2_swap_buffers_reply(dri2_dpy->conn, cookie, NULL);
 
-   reply = xcb_dri2_swap_buffers_reply(dri2_dpy->conn, cookie, NULL);
-
-   if (reply) {
-      swap_count = (((int64_t)reply->swap_hi) << 32) | reply->swap_lo;
-      free(reply);
+      if (reply) {
+         swap_count = (((int64_t)reply->swap_hi) << 32) | reply->swap_lo;
+         free(reply);
+      }
    }
 
    /* Since we aren't watching for the server's invalidate events like we're
@@ -957,15 +964,8 @@ dri2_x11_swap_interval(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf,
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
 
-   if (interval > surf->Config->MaxSwapInterval)
-      interval = surf->Config->MaxSwapInterval;
-   else if (interval < surf->Config->MinSwapInterval)
-      interval = surf->Config->MinSwapInterval;
-
-   if (interval != surf->SwapInterval && dri2_dpy->swap_available)
+   if (dri2_dpy->swap_available)
       xcb_dri2_swap_interval(dri2_dpy->conn, dri2_surf->drawable, interval);
-
-   surf->SwapInterval = interval;
 
    return EGL_TRUE;
 }
@@ -1052,6 +1052,9 @@ dri2_create_image_khr_pixmap(_EGLDisplay *disp, _EGLContext *ctx,
    case 24:
       format = __DRI_IMAGE_FORMAT_XRGB8888;
       break;
+   case 30:
+      format = __DRI_IMAGE_FORMAT_XRGB2101010;
+      break;
    case 32:
       format = __DRI_IMAGE_FORMAT_ARGB8888;
       break;
@@ -1134,8 +1137,7 @@ static const struct dri2_egl_display_vtbl dri2_x11_swrast_display_vtbl = {
    .create_pixmap_surface = dri2_x11_create_pixmap_surface,
    .create_pbuffer_surface = dri2_x11_create_pbuffer_surface,
    .destroy_surface = dri2_x11_destroy_surface,
-   .create_image = dri2_fallback_create_image_khr,
-   .swap_interval = dri2_fallback_swap_interval,
+   .create_image = dri2_create_image_khr,
    .swap_buffers = dri2_x11_swap_buffers,
    .set_damage_region = dri2_fallback_set_damage_region,
    .swap_buffers_region = dri2_fallback_swap_buffers_region,
@@ -1179,6 +1181,7 @@ static const __DRIswrastLoaderExtension swrast_loader_extension = {
 
 static const __DRIextension *swrast_loader_extensions[] = {
    &swrast_loader_extension.base,
+   &image_lookup_extension.base,
    NULL,
 };
 
@@ -1268,9 +1271,9 @@ dri2_initialize_x11_swrast(_EGLDriver *drv, _EGLDisplay *disp)
 }
 
 static void
-dri2_x11_setup_swap_interval(struct dri2_egl_display *dri2_dpy)
+dri2_x11_setup_swap_interval(_EGLDisplay *disp)
 {
-   GLint vblank_mode = DRI_CONF_VBLANK_DEF_INTERVAL_1;
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    int arbitrary_max_interval = 1000;
 
    /* default behavior for no SwapBuffers support: no vblank syncing
@@ -1284,34 +1287,9 @@ dri2_x11_setup_swap_interval(struct dri2_egl_display *dri2_dpy)
       return;
 
    /* If we do have swapbuffers, then we can support pretty much any swap
-    * interval, but we allow driconf to override applications.
+    * interval.
     */
-   if (dri2_dpy->config)
-      dri2_dpy->config->configQueryi(dri2_dpy->dri_screen,
-                                     "vblank_mode", &vblank_mode);
-   switch (vblank_mode) {
-   case DRI_CONF_VBLANK_NEVER:
-      dri2_dpy->min_swap_interval = 0;
-      dri2_dpy->max_swap_interval = 0;
-      dri2_dpy->default_swap_interval = 0;
-      break;
-   case DRI_CONF_VBLANK_ALWAYS_SYNC:
-      dri2_dpy->min_swap_interval = 1;
-      dri2_dpy->max_swap_interval = arbitrary_max_interval;
-      dri2_dpy->default_swap_interval = 1;
-      break;
-   case DRI_CONF_VBLANK_DEF_INTERVAL_0:
-      dri2_dpy->min_swap_interval = 0;
-      dri2_dpy->max_swap_interval = arbitrary_max_interval;
-      dri2_dpy->default_swap_interval = 0;
-      break;
-   default:
-   case DRI_CONF_VBLANK_DEF_INTERVAL_1:
-      dri2_dpy->min_swap_interval = 0;
-      dri2_dpy->max_swap_interval = arbitrary_max_interval;
-      dri2_dpy->default_swap_interval = 1;
-      break;
-   }
+   dri2_setup_swap_interval(disp, arbitrary_max_interval);
 }
 
 #ifdef HAVE_DRI3
@@ -1356,7 +1334,7 @@ dri2_initialize_x11_dri3(_EGLDriver *drv, _EGLDisplay *disp)
 
    dri2_setup_screen(disp);
 
-   dri2_x11_setup_swap_interval(dri2_dpy);
+   dri2_x11_setup_swap_interval(disp);
 
    if (!dri2_dpy->is_different_gpu)
       disp->Extensions.KHR_image_pixmap = EGL_TRUE;
@@ -1417,6 +1395,7 @@ static const __DRIextension *dri2_loader_extensions_old[] = {
 static const __DRIextension *dri2_loader_extensions[] = {
    &dri2_loader_extension.base,
    &image_lookup_extension.base,
+   &use_invalidate.base,
    &background_callable_extension.base,
    NULL,
 };
@@ -1456,7 +1435,7 @@ dri2_initialize_x11_dri2(_EGLDriver *drv, _EGLDisplay *disp)
 
    dri2_setup_screen(disp);
 
-   dri2_x11_setup_swap_interval(dri2_dpy);
+   dri2_x11_setup_swap_interval(disp);
 
    disp->Extensions.KHR_image_pixmap = EGL_TRUE;
    disp->Extensions.NOK_swap_region = EGL_TRUE;
@@ -1488,9 +1467,9 @@ dri2_initialize_x11(_EGLDriver *drv, _EGLDisplay *disp)
 {
    EGLBoolean initialized = EGL_FALSE;
 
-   if (!getenv("LIBGL_ALWAYS_SOFTWARE")) {
+   if (!disp->Options.ForceSoftware) {
 #ifdef HAVE_DRI3
-      if (!getenv("LIBGL_DRI3_DISABLE"))
+      if (!env_var_as_boolean("LIBGL_DRI3_DISABLE", false))
          initialized = dri2_initialize_x11_dri3(drv, disp);
 #endif
 
@@ -1504,3 +1483,9 @@ dri2_initialize_x11(_EGLDriver *drv, _EGLDisplay *disp)
    return initialized;
 }
 
+void
+dri2_teardown_x11(struct dri2_egl_display *dri2_dpy)
+{
+   if (dri2_dpy->own_device)
+      xcb_disconnect(dri2_dpy->conn);
+}

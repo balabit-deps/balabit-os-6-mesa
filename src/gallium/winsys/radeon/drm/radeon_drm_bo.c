@@ -31,7 +31,7 @@
 #include "util/simple_list.h"
 #include "os/os_thread.h"
 #include "os/os_mman.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 
 #include "state_tracker/drm_driver.h"
 
@@ -490,7 +490,7 @@ static void *radeon_bo_map(struct pb_buffer *buf,
                  *
                  * Only check whether the buffer is being used for write. */
                 if (cs && radeon_bo_is_referenced_by_cs_for_write(cs, bo)) {
-                    cs->flush_cs(cs->flush_data, RADEON_FLUSH_ASYNC, NULL);
+                    cs->flush_cs(cs->flush_data, PIPE_FLUSH_ASYNC, NULL);
                     return NULL;
                 }
 
@@ -500,7 +500,7 @@ static void *radeon_bo_map(struct pb_buffer *buf,
                 }
             } else {
                 if (cs && radeon_bo_is_referenced_by_cs(cs, bo)) {
-                    cs->flush_cs(cs->flush_data, RADEON_FLUSH_ASYNC, NULL);
+                    cs->flush_cs(cs->flush_data, PIPE_FLUSH_ASYNC, NULL);
                     return NULL;
                 }
 
@@ -608,6 +608,13 @@ static struct radeon_bo *radeon_create_bo(struct radeon_drm_winsys *rws,
     args.alignment = alignment;
     args.initial_domain = initial_domains;
     args.flags = 0;
+
+    /* If VRAM is just stolen system memory, allow both VRAM and
+     * GTT, whichever has free space. If a buffer is evicted from
+     * VRAM to GTT, it will stay there.
+     */
+    if (!rws->info.has_dedicated_vram)
+        args.initial_domain |= RADEON_DOMAIN_GTT;
 
     if (flags & RADEON_FLAG_GTT_WC)
         args.flags |= RADEON_GEM_GTT_WC;
@@ -914,7 +921,7 @@ radeon_winsys_bo_create(struct radeon_winsys *rws,
 {
     struct radeon_drm_winsys *ws = radeon_drm_winsys(rws);
     struct radeon_bo *bo;
-    unsigned usage = 0, pb_cache_bucket;
+    unsigned usage = 0, pb_cache_bucket = 0;
 
     assert(!(flags & RADEON_FLAG_SPARSE)); /* not supported */
 
@@ -969,17 +976,22 @@ no_slab:
     size = align(size, ws->info.gart_page_size);
     alignment = align(alignment, ws->info.gart_page_size);
 
-    int heap = radeon_get_heap_index(domain, flags);
-    assert(heap >= 0 && heap < RADEON_MAX_CACHED_HEAPS);
-    usage = 1 << heap; /* Only set one usage bit for each heap. */
+    bool use_reusable_pool = flags & RADEON_FLAG_NO_INTERPROCESS_SHARING;
 
-    pb_cache_bucket = radeon_get_pb_cache_bucket_index(heap);
-    assert(pb_cache_bucket < ARRAY_SIZE(ws->bo_cache.buckets));
+    /* Shared resources don't use cached heaps. */
+    if (use_reusable_pool) {
+        int heap = radeon_get_heap_index(domain, flags);
+        assert(heap >= 0 && heap < RADEON_MAX_CACHED_HEAPS);
+        usage = 1 << heap; /* Only set one usage bit for each heap. */
 
-    bo = radeon_bo(pb_cache_reclaim_buffer(&ws->bo_cache, size, alignment,
-                                           usage, pb_cache_bucket));
-    if (bo)
-        return &bo->base;
+        pb_cache_bucket = radeon_get_pb_cache_bucket_index(heap);
+        assert(pb_cache_bucket < ARRAY_SIZE(ws->bo_cache.buckets));
+
+        bo = radeon_bo(pb_cache_reclaim_buffer(&ws->bo_cache, size, alignment,
+                                               usage, pb_cache_bucket));
+        if (bo)
+            return &bo->base;
+    }
 
     bo = radeon_create_bo(ws, size, alignment, usage, domain, flags,
                           pb_cache_bucket);
@@ -994,7 +1006,7 @@ no_slab:
             return NULL;
     }
 
-    bo->u.real.use_reusable_pool = true;
+    bo->u.real.use_reusable_pool = use_reusable_pool;
 
     mtx_lock(&ws->bo_handles_mutex);
     util_hash_table_set(ws->bo_handles, (void*)(uintptr_t)bo->handle, bo);

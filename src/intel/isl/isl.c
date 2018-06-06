@@ -269,6 +269,26 @@ isl_tiling_get_info(enum isl_tiling tiling,
 }
 
 bool
+isl_color_value_is_zero(union isl_color_value value,
+                        enum isl_format format)
+{
+   const struct isl_format_layout *fmtl = isl_format_get_layout(format);
+
+#define RETURN_FALSE_IF_NOT_0(c, i) \
+   if (fmtl->channels.c.bits && value.u32[i] != 0) \
+      return false
+
+   RETURN_FALSE_IF_NOT_0(r, 0);
+   RETURN_FALSE_IF_NOT_0(g, 1);
+   RETURN_FALSE_IF_NOT_0(b, 2);
+   RETURN_FALSE_IF_NOT_0(a, 3);
+
+#undef RETURN_FALSE_IF_NOT_0
+
+   return true;
+}
+
+bool
 isl_color_value_is_zero_one(union isl_color_value value,
                             enum isl_format format)
 {
@@ -1742,6 +1762,42 @@ isl_surf_get_ccs_surf(const struct isl_device *dev,
                         .tiling_flags = ISL_TILING_CCS_BIT);
 }
 
+#define isl_genX_call(dev, func, ...)              \
+   switch (ISL_DEV_GEN(dev)) {                     \
+   case 4:                                         \
+      /* G45 surface state is the same as gen5 */  \
+      if (ISL_DEV_IS_G4X(dev)) {                   \
+         isl_gen5_##func(__VA_ARGS__);             \
+      } else {                                     \
+         isl_gen4_##func(__VA_ARGS__);             \
+      }                                            \
+      break;                                       \
+   case 5:                                         \
+      isl_gen5_##func(__VA_ARGS__);                \
+      break;                                       \
+   case 6:                                         \
+      isl_gen6_##func(__VA_ARGS__);                \
+      break;                                       \
+   case 7:                                         \
+      if (ISL_DEV_IS_HASWELL(dev)) {               \
+         isl_gen75_##func(__VA_ARGS__);            \
+      } else {                                     \
+         isl_gen7_##func(__VA_ARGS__);             \
+      }                                            \
+      break;                                       \
+   case 8:                                         \
+      isl_gen8_##func(__VA_ARGS__);                \
+      break;                                       \
+   case 9:                                         \
+      isl_gen9_##func(__VA_ARGS__);                \
+      break;                                       \
+   case 10:                                        \
+      isl_gen10_##func(__VA_ARGS__);               \
+      break;                                       \
+   default:                                        \
+      assert(!"Unknown hardware generation");      \
+   }
+
 void
 isl_surf_fill_state_s(const struct isl_device *dev, void *state,
                       const struct isl_surf_fill_state_info *restrict info)
@@ -1765,74 +1821,21 @@ isl_surf_fill_state_s(const struct isl_device *dev, void *state,
              info->surf->logical_level0_px.array_len);
    }
 
-   switch (ISL_DEV_GEN(dev)) {
-   case 4:
-      if (ISL_DEV_IS_G4X(dev)) {
-         /* G45 surface state is the same as gen5 */
-         isl_gen5_surf_fill_state_s(dev, state, info);
-      } else {
-         isl_gen4_surf_fill_state_s(dev, state, info);
-      }
-      break;
-   case 5:
-      isl_gen5_surf_fill_state_s(dev, state, info);
-      break;
-   case 6:
-      isl_gen6_surf_fill_state_s(dev, state, info);
-      break;
-   case 7:
-      if (ISL_DEV_IS_HASWELL(dev)) {
-         isl_gen75_surf_fill_state_s(dev, state, info);
-      } else {
-         isl_gen7_surf_fill_state_s(dev, state, info);
-      }
-      break;
-   case 8:
-      isl_gen8_surf_fill_state_s(dev, state, info);
-      break;
-   case 9:
-      isl_gen9_surf_fill_state_s(dev, state, info);
-      break;
-   case 10:
-      isl_gen10_surf_fill_state_s(dev, state, info);
-      break;
-   default:
-      assert(!"Cannot fill surface state for this gen");
-   }
+   isl_genX_call(dev, surf_fill_state_s, dev, state, info);
 }
 
 void
 isl_buffer_fill_state_s(const struct isl_device *dev, void *state,
                         const struct isl_buffer_fill_state_info *restrict info)
 {
-   switch (ISL_DEV_GEN(dev)) {
-   case 4:
-   case 5:
-      /* Gen 4-5 are all the same when it comes to buffer surfaces */
-      isl_gen5_buffer_fill_state_s(state, info);
-      break;
-   case 6:
-      isl_gen6_buffer_fill_state_s(state, info);
-      break;
-   case 7:
-      if (ISL_DEV_IS_HASWELL(dev)) {
-         isl_gen75_buffer_fill_state_s(state, info);
-      } else {
-         isl_gen7_buffer_fill_state_s(state, info);
-      }
-      break;
-   case 8:
-      isl_gen8_buffer_fill_state_s(state, info);
-      break;
-   case 9:
-      isl_gen9_buffer_fill_state_s(state, info);
-      break;
-   case 10:
-      isl_gen10_buffer_fill_state_s(state, info);
-      break;
-   default:
-      assert(!"Cannot fill surface state for this gen");
-   }
+   isl_genX_call(dev, buffer_fill_state_s, state, info);
+}
+
+void
+isl_null_fill_state(const struct isl_device *dev, void *state,
+                    struct isl_extent3d size)
+{
+   isl_genX_call(dev, null_fill_state, state, size);
 }
 
 void
@@ -1869,40 +1872,7 @@ isl_emit_depth_stencil_hiz_s(const struct isl_device *dev, void *batch,
       }
    }
 
-   switch (ISL_DEV_GEN(dev)) {
-   case 4:
-      if (ISL_DEV_IS_G4X(dev)) {
-         /* G45 surface state is the same as gen5 */
-         isl_gen5_emit_depth_stencil_hiz_s(dev, batch, info);
-      } else {
-         isl_gen4_emit_depth_stencil_hiz_s(dev, batch, info);
-      }
-      break;
-   case 5:
-      isl_gen5_emit_depth_stencil_hiz_s(dev, batch, info);
-      break;
-   case 6:
-      isl_gen6_emit_depth_stencil_hiz_s(dev, batch, info);
-      break;
-   case 7:
-      if (ISL_DEV_IS_HASWELL(dev)) {
-         isl_gen75_emit_depth_stencil_hiz_s(dev, batch, info);
-      } else {
-         isl_gen7_emit_depth_stencil_hiz_s(dev, batch, info);
-      }
-      break;
-   case 8:
-      isl_gen8_emit_depth_stencil_hiz_s(dev, batch, info);
-      break;
-   case 9:
-      isl_gen9_emit_depth_stencil_hiz_s(dev, batch, info);
-      break;
-   case 10:
-      isl_gen10_emit_depth_stencil_hiz_s(dev, batch, info);
-      break;
-   default:
-      assert(!"Cannot fill surface state for this gen");
-   }
+   isl_genX_call(dev, emit_depth_stencil_hiz_s, dev, batch, info);
 }
 
 /**

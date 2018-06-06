@@ -50,14 +50,14 @@
  * Max texture sizes
  * XXX Check max texture size values against core and sampler.
  */
-#define SWR_MAX_TEXTURE_SIZE (4 * 1024 * 1024 * 1024ULL) /* 4GB */
+#define SWR_MAX_TEXTURE_SIZE (2 * 1024 * 1024 * 1024ULL) /* 2GB */
 #define SWR_MAX_TEXTURE_2D_LEVELS 14  /* 8K x 8K for now */
 #define SWR_MAX_TEXTURE_3D_LEVELS 12  /* 2K x 2K x 2K for now */
 #define SWR_MAX_TEXTURE_CUBE_LEVELS 14  /* 8K x 8K for now */
 #define SWR_MAX_TEXTURE_ARRAY_LAYERS 512 /* 8K x 512 / 8K x 8K x 512 */
 
 /* Default max client_copy_limit */
-#define SWR_CLIENT_COPY_LIMIT 32768
+#define SWR_CLIENT_COPY_LIMIT 8192
 
 /* Flag indicates creation of alternate surface, to prevent recursive loop
  * in resource creation when msaa_force_enable is set. */
@@ -147,10 +147,6 @@ swr_is_format_supported(struct pipe_screen *_screen,
       return FALSE;
    }
 
-   if (format_desc->layout == UTIL_FORMAT_LAYOUT_S3TC) {
-      return util_format_s3tc_enabled;
-   }
-
    return TRUE;
 }
 
@@ -207,7 +203,6 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_NPOT_TEXTURES:
    case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
    case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
-   case PIPE_CAP_TWO_SIDED_STENCIL:
    case PIPE_CAP_SM3:
    case PIPE_CAP_POINT_SPRITE:
    case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
@@ -215,7 +210,6 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_QUERY_TIME_ELAPSED:
    case PIPE_CAP_QUERY_PIPELINE_STATISTICS:
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
-   case PIPE_CAP_TEXTURE_SHADOW_MAP:
    case PIPE_CAP_TEXTURE_SWIZZLE:
    case PIPE_CAP_BLEND_EQUATION_SEPARATE:
    case PIPE_CAP_INDEP_BLEND_ENABLE:
@@ -235,7 +229,6 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MIXED_COLORBUFFER_FORMATS:
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
    case PIPE_CAP_USER_VERTEX_BUFFERS:
-   case PIPE_CAP_USER_CONSTANT_BUFFERS:
    case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:
    case PIPE_CAP_QUERY_TIMESTAMP:
    case PIPE_CAP_TEXTURE_BUFFER_OBJECTS:
@@ -255,13 +248,19 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
       return 1;
 
    /* MSAA support
-    * If user has explicitly set max_sample_count = 0 (via SWR_MSAA_MAX_COUNT)
-    * then disable all MSAA support and go back to old caps. */
+    * If user has explicitly set max_sample_count = 1 (via SWR_MSAA_MAX_COUNT)
+    * then disable all MSAA support and go back to old (FAKE_SW_MSAA) caps. */
    case PIPE_CAP_TEXTURE_MULTISAMPLE:
    case PIPE_CAP_MULTISAMPLE_Z_RESOLVE:
-      return swr_screen(screen)->msaa_max_count ? 1 : 0;
+      return (swr_screen(screen)->msaa_max_count > 1) ? 1 : 0;
    case PIPE_CAP_FAKE_SW_MSAA:
-      return swr_screen(screen)->msaa_max_count ? 0 : 1;
+      return (swr_screen(screen)->msaa_max_count > 1) ? 0 : 1;
+
+   /* fetch jit change for 2-4GB buffers requires alignment */
+   case PIPE_CAP_VERTEX_BUFFER_OFFSET_4BYTE_ALIGNED_ONLY:
+   case PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY:
+   case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
+      return 1;
 
       /* unsupported features */
    case PIPE_CAP_ANISOTROPIC_FILTER:
@@ -274,9 +273,6 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_COMPUTE:
    case PIPE_CAP_TGSI_VS_LAYER_VIEWPORT:
    case PIPE_CAP_TGSI_CAN_COMPACT_CONSTANTS:
-   case PIPE_CAP_VERTEX_BUFFER_OFFSET_4BYTE_ALIGNED_ONLY:
-   case PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY:
-   case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_TGSI_TEXCOORD:
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
    case PIPE_CAP_MAX_TEXTURE_GATHER_COMPONENTS:
@@ -339,6 +335,15 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_ALLOW_MAPPED_BUFFERS_DURING_EXECUTION:
    case PIPE_CAP_POST_DEPTH_COVERAGE:
    case PIPE_CAP_BINDLESS_TEXTURE:
+   case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+   case PIPE_CAP_QUERY_SO_OVERFLOW:
+   case PIPE_CAP_MEMOBJ:
+   case PIPE_CAP_LOAD_CONSTBUF:
+   case PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS:
+   case PIPE_CAP_TILE_RASTER_ORDER:
+   case PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES:
+   case PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET:
+   case PIPE_CAP_CONTEXT_PRIORITY_MASK:
       return 0;
 
    case PIPE_CAP_VENDOR_ID:
@@ -646,7 +651,7 @@ swr_displaytarget_layout(struct swr_screen *screen, struct swr_resource *res)
    void *map = winsys->displaytarget_map(winsys, dt, 0);
 
    res->display_target = dt;
-   res->swr.pBaseAddress = (uint8_t*) map;
+   res->swr.xpBaseAddress = (gfxptr_t)map;
 
    /* Clear the display target surface */
    if (map)
@@ -814,13 +819,15 @@ swr_texture_layout(struct swr_screen *screen,
          ComputeSurfaceOffset<false>(0, 0, 0, 0, 0, level, &res->swr);
    }
 
-   size_t total_size = res->swr.depth * res->swr.qpitch * res->swr.pitch *
-                       res->swr.numSamples;
+   size_t total_size = (uint64_t)res->swr.depth * res->swr.qpitch *
+                                 res->swr.pitch * res->swr.numSamples;
    if (total_size > SWR_MAX_TEXTURE_SIZE)
       return false;
 
    if (allocate) {
-      res->swr.pBaseAddress = (uint8_t *)AlignedMalloc(total_size, 64);
+      res->swr.xpBaseAddress = (gfxptr_t)AlignedMalloc(total_size, 64);
+      if (!res->swr.xpBaseAddress)
+         return false;
 
       if (res->has_depth && res->has_stencil) {
          res->secondary = res->swr;
@@ -835,8 +842,11 @@ swr_texture_layout(struct swr_screen *screen,
          total_size = res->secondary.depth * res->secondary.qpitch *
                       res->secondary.pitch * res->secondary.numSamples;
 
-         res->secondary.pBaseAddress = (uint8_t *) AlignedMalloc(total_size,
-                                                                 64);
+         res->secondary.xpBaseAddress = (gfxptr_t) AlignedMalloc(total_size, 64);
+         if (!res->secondary.xpBaseAddress) {
+            AlignedFree((void *)res->swr.xpBaseAddress);
+            return false;
+         }
       }
    }
 
@@ -896,7 +906,7 @@ swr_create_resolve_resource(struct pipe_screen *_screen,
 
       /* Hang resolve surface state off the multisample surface state to so
        * StoreTiles knows where to resolve the surface. */
-      msaa_res->swr.pAuxBaseAddress =  (uint8_t *)&swr_resource(alt)->swr;
+      msaa_res->swr.xpAuxBaseAddress = (gfxptr_t)&swr_resource(alt)->swr;
    }
 
    return true; /* success */
@@ -972,10 +982,10 @@ swr_resource_destroy(struct pipe_screen *p_screen, struct pipe_resource *pt)
       if (spr->swr.numSamples > 1) {
          /* Free an attached resolve resource */
          struct swr_resource *alt = swr_resource(spr->resolve_target);
-         swr_fence_work_free(screen->flush_fence, alt->swr.pBaseAddress, true);
+         swr_fence_work_free(screen->flush_fence, (void*)(alt->swr.xpBaseAddress), true);
 
          /* Free multisample buffer */
-         swr_fence_work_free(screen->flush_fence, spr->swr.pBaseAddress, true);
+         swr_fence_work_free(screen->flush_fence, (void*)(spr->swr.xpBaseAddress), true);
       }
    } else {
       /* For regular resources, defer deletion */
@@ -984,12 +994,12 @@ swr_resource_destroy(struct pipe_screen *p_screen, struct pipe_resource *pt)
       if (spr->swr.numSamples > 1) {
          /* Free an attached resolve resource */
          struct swr_resource *alt = swr_resource(spr->resolve_target);
-         swr_fence_work_free(screen->flush_fence, alt->swr.pBaseAddress, true);
+         swr_fence_work_free(screen->flush_fence, (void*)(alt->swr.xpBaseAddress), true);
       }
 
-      swr_fence_work_free(screen->flush_fence, spr->swr.pBaseAddress, true);
+      swr_fence_work_free(screen->flush_fence, (void*)(spr->swr.xpBaseAddress), true);
       swr_fence_work_free(screen->flush_fence,
-                          spr->secondary.pBaseAddress, true);
+                          (void*)(spr->secondary.xpBaseAddress), true);
 
       /* If work queue grows too large, submit a fence to force queue to
        * drain.  This is mainly to decrease the amount of memory used by the
@@ -1031,7 +1041,7 @@ swr_flush_frontbuffer(struct pipe_screen *p_screen,
 
       void *map = winsys->displaytarget_map(winsys, spr->display_target,
                                             PIPE_TRANSFER_WRITE);
-      memcpy(map, resolve->pBaseAddress, resolve->pitch * resolve->height);
+      memcpy(map, (void*)(resolve->xpBaseAddress), resolve->pitch * resolve->height);
       winsys->displaytarget_unmap(winsys, spr->display_target);
    }
 
@@ -1039,6 +1049,24 @@ swr_flush_frontbuffer(struct pipe_screen *p_screen,
    if (spr->display_target)
       winsys->displaytarget_display(
          winsys, spr->display_target, context_private, sub_box);
+}
+
+
+void
+swr_destroy_screen_internal(struct swr_screen **screen)
+{
+   struct pipe_screen *p_screen = &(*screen)->base;
+
+   swr_fence_finish(p_screen, NULL, (*screen)->flush_fence, 0);
+   swr_fence_reference(p_screen, &(*screen)->flush_fence, NULL);
+
+   JitDestroyContext((*screen)->hJitMgr);
+
+   if ((*screen)->pLibrary)
+      util_dl_close((*screen)->pLibrary);
+
+   FREE(*screen);
+   *screen = NULL;
 }
 
 
@@ -1050,15 +1078,10 @@ swr_destroy_screen(struct pipe_screen *p_screen)
 
    fprintf(stderr, "SWR destroy screen!\n");
 
-   swr_fence_finish(p_screen, NULL, screen->flush_fence, 0);
-   swr_fence_reference(p_screen, &screen->flush_fence, NULL);
-
-   JitDestroyContext(screen->hJitMgr);
-
    if (winsys->destroy)
       winsys->destroy(winsys);
 
-   FREE(screen);
+   swr_destroy_screen_internal(&screen);
 }
 
 
@@ -1076,22 +1099,22 @@ swr_validate_env_options(struct swr_screen *screen)
       screen->client_copy_limit = client_copy_limit;
 
    /* XXX msaa under development, disable by default for now */
-   screen->msaa_max_count = 0; /* was SWR_MAX_NUM_MULTISAMPLES; */
+   screen->msaa_max_count = 1; /* was SWR_MAX_NUM_MULTISAMPLES; */
 
    /* validate env override values, within range and power of 2 */
-   int msaa_max_count = debug_get_num_option("SWR_MSAA_MAX_COUNT", 0);
-   if (msaa_max_count) {
-      if ((msaa_max_count < 0) || (msaa_max_count > SWR_MAX_NUM_MULTISAMPLES)
+   int msaa_max_count = debug_get_num_option("SWR_MSAA_MAX_COUNT", 1);
+   if (msaa_max_count != 1) {
+      if ((msaa_max_count < 1) || (msaa_max_count > SWR_MAX_NUM_MULTISAMPLES)
             || !util_is_power_of_two(msaa_max_count)) {
          fprintf(stderr, "SWR_MSAA_MAX_COUNT invalid: %d\n", msaa_max_count);
          fprintf(stderr, "must be power of 2 between 1 and %d" \
-                         " (or 0 to disable msaa)\n",
+                         " (or 1 to disable msaa)\n",
                SWR_MAX_NUM_MULTISAMPLES);
-         msaa_max_count = 0;
+         msaa_max_count = 1;
       }
 
       fprintf(stderr, "SWR_MSAA_MAX_COUNT: %d\n", msaa_max_count);
-      if (!msaa_max_count)
+      if (msaa_max_count == 1)
          fprintf(stderr, "(msaa disabled)\n");
 
       screen->msaa_max_count = msaa_max_count;
@@ -1109,6 +1132,7 @@ struct pipe_screen *
 swr_create_screen_internal(struct sw_winsys *winsys)
 {
    struct swr_screen *screen = CALLOC_STRUCT(swr_screen);
+   memset(screen, 0, sizeof(struct swr_screen));
 
    if (!screen)
       return NULL;
@@ -1139,8 +1163,6 @@ swr_create_screen_internal(struct sw_winsys *winsys)
    screen->hJitMgr = JitCreateContext(KNOB_SIMD_WIDTH, "", "swr");
 
    swr_fence_init(&screen->base);
-
-   util_format_s3tc_init();
 
    swr_validate_env_options(screen);
 

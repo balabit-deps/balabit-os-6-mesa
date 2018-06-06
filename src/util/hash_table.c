@@ -476,9 +476,10 @@ _mesa_hash_data(const void *data, size_t size)
 
 /** FNV-1a string hash implementation */
 uint32_t
-_mesa_hash_string(const char *key)
+_mesa_hash_string(const void *_key)
 {
    uint32_t hash = _mesa_fnv32_1a_offset_bias;
+   const char *key = _key;
 
    while (*key != 0) {
       hash = _mesa_fnv32_1a_accumulate(hash, *key);
@@ -588,7 +589,7 @@ _mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
    }
 
    if (sizeof(void *) == 8) {
-      _mesa_hash_table_insert(ht->table, (void *)key, data);
+      _mesa_hash_table_insert(ht->table, (void *)(uintptr_t)key, data);
    } else {
       struct hash_key_u64 *_key = CALLOC_STRUCT(hash_key_u64);
 
@@ -604,7 +605,7 @@ static struct hash_entry *
 hash_table_u64_search(struct hash_table_u64 *ht, uint64_t key)
 {
    if (sizeof(void *) == 8) {
-      return _mesa_hash_table_search(ht->table, (void *)key);
+      return _mesa_hash_table_search(ht->table, (void *)(uintptr_t)key);
    } else {
       struct hash_key_u64 _key = { .value = key };
       return _mesa_hash_table_search(ht->table, &_key);

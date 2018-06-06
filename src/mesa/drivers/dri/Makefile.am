@@ -57,6 +57,7 @@ mesa_dri_drivers_la_LDFLAGS = \
 	-module \
 	-no-undefined \
 	-avoid-version \
+	$(LD_BUILD_ID) \
 	$(BSYMBOLIC) \
 	$(GC_SECTIONS) \
 	$(LD_NO_UNDEFINED)
@@ -65,11 +66,13 @@ mesa_dri_drivers_la_LIBADD = \
         ../../libmesa.la \
         common/libmegadriver_stub.la \
         common/libdricommon.la \
-        common/libxmlconfig.la \
+        $(top_builddir)/src/util/libxmlconfig.la \
         $(top_builddir)/src/mapi/shared-glapi/libglapi.la \
         $(MEGADRIVERS_DEPS) \
         $(DRI_LIB_DEPS) \
         $()
+
+EXTRA_DIST = meson.build
 
 if NEED_MEGADRIVER
 dri_LTLIBRARIES = mesa_dri_drivers.la

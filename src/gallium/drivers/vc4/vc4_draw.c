@@ -40,7 +40,7 @@ vc4_get_draw_cl_space(struct vc4_job *job, int vert_count)
         /* The SW-5891 workaround may cause us to emit multiple shader recs
          * and draw packets.
          */
-        int num_draws = DIV_ROUND_UP(vert_count, 65535) + 1;
+        int num_draws = DIV_ROUND_UP(vert_count, 65535 - 2) + 1;
 
         /* Binner gets our packet state -- vc4_emit.c contents,
          * and the primitive itself.
@@ -286,6 +286,7 @@ static void
 vc4_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
 {
         struct vc4_context *vc4 = vc4_context(pctx);
+        struct pipe_draw_info local_info;
 
 	if (!info->count_from_stream_output && !info->indirect &&
 	    !info->primitive_restart &&
@@ -293,11 +294,19 @@ vc4_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
 		return;
 
         if (info->mode >= PIPE_PRIM_QUADS) {
-                util_primconvert_save_rasterizer_state(vc4->primconvert, &vc4->rasterizer->base);
-                util_primconvert_draw_vbo(vc4->primconvert, info);
-                perf_debug("Fallback conversion for %d %s vertices\n",
-                           info->count, u_prim_name(info->mode));
-                return;
+                if (info->mode == PIPE_PRIM_QUADS &&
+                    info->count == 4 &&
+                    !vc4->rasterizer->base.flatshade) {
+                        local_info = *info;
+                        local_info.mode = PIPE_PRIM_TRIANGLE_FAN;
+                        info = &local_info;
+                } else {
+                        util_primconvert_save_rasterizer_state(vc4->primconvert, &vc4->rasterizer->base);
+                        util_primconvert_draw_vbo(vc4->primconvert, info);
+                        perf_debug("Fallback conversion for %d %s vertices\n",
+                                   info->count, u_prim_name(info->mode));
+                        return;
+                }
         }
 
         /* Before setting up the draw, do any fixup blits necessary. */
@@ -307,6 +316,14 @@ vc4_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
         vc4_hw_2116_workaround(pctx, info->count);
 
         struct vc4_job *job = vc4_get_job_for_fbo(vc4);
+
+        /* Make sure that the raster order flags haven't changed, which can
+         * only be set at job granularity.
+         */
+        if (job->flags != vc4->rasterizer->tile_raster_order_flags) {
+                vc4_job_submit(vc4, job);
+                job = vc4_get_job_for_fbo(vc4);
+        }
 
         vc4_get_draw_cl_space(job, info->count);
 
@@ -369,7 +386,25 @@ vc4_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
                 struct vc4_resource *rsc = vc4_resource(prsc);
 
                 struct vc4_cl_out *bcl = cl_start(&job->bcl);
-                cl_start_reloc(&job->bcl, &bcl, 1);
+
+                /* The original design for the VC4 kernel UABI had multiple
+                 * packets that used relocations in the BCL (some of which
+                 * needed two BOs), but later modifications eliminated all but
+                 * this one usage.  We have an arbitrary 32-bit offset value,
+                 * and need to also supply an arbitrary 32-bit index buffer
+                 * GEM handle, so we have this fake packet we emit in our BCL
+                 * to be validated, which the kernel uses at validation time
+                 * to perform the relocation in the IB packet (without
+                 * emitting to the actual HW).
+                 */
+                uint32_t hindex = vc4_gem_hindex(job, rsc->bo);
+                if (job->last_gem_handle_hindex != hindex) {
+                        cl_u8(&bcl, VC4_PACKET_GEM_HANDLES);
+                        cl_u32(&bcl, hindex);
+                        cl_u32(&bcl, 0);
+                        job->last_gem_handle_hindex = hindex;
+                }
+
                 cl_u8(&bcl, VC4_PACKET_GL_INDEXED_PRIMITIVE);
                 cl_u8(&bcl,
                       info->mode |
@@ -377,8 +412,9 @@ vc4_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
                        VC4_INDEX_BUFFER_U16:
                        VC4_INDEX_BUFFER_U8));
                 cl_u32(&bcl, info->count);
-                cl_reloc(job, &job->bcl, &bcl, rsc->bo, offset);
+                cl_u32(&bcl, offset);
                 cl_u32(&bcl, vc4->max_index);
+
                 cl_end(&job->bcl, bcl);
                 job->draw_calls_queued++;
 
@@ -529,6 +565,8 @@ vc4_clear(struct pipe_context *pctx, unsigned buffers,
                      zsclear == PIPE_CLEAR_STENCIL) &&
                     (rsc->initialized_buffers & ~(zsclear | job->cleared)) &&
                     util_format_is_depth_and_stencil(vc4->framebuffer.zsbuf->format)) {
+                        static const union pipe_color_union dummy_color = {};
+
                         perf_debug("Partial clear of Z+stencil buffer, "
                                    "drawing a quad instead of fast clearing\n");
                         vc4_blitter_save(vc4);
@@ -537,7 +575,7 @@ vc4_clear(struct pipe_context *pctx, unsigned buffers,
                                            vc4->framebuffer.height,
                                            1,
                                            zsclear,
-                                           NULL, depth, stencil);
+                                           &dummy_color, depth, stencil);
                         buffers &= ~zsclear;
                         if (!buffers)
                                 return;

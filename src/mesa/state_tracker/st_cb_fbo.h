@@ -29,7 +29,6 @@
 #ifndef ST_CB_FBO_H
 #define ST_CB_FBO_H
 
-#include "main/compiler.h"
 #include "main/fbobject.h"
 #include "main/glheader.h"
 #include "main/mtypes.h"
@@ -79,6 +78,11 @@ st_renderbuffer(struct gl_renderbuffer *rb)
    return (struct st_renderbuffer *) rb;
 }
 
+static inline struct pipe_resource *
+st_get_renderbuffer_resource(struct gl_renderbuffer *rb)
+{
+   return st_renderbuffer(rb)->texture;
+}
 
 /**
  * Cast wrapper to convert a struct gl_framebuffer to an st_framebuffer.
@@ -98,7 +102,7 @@ st_ws_framebuffer(struct gl_framebuffer *fb)
 
 
 extern struct gl_renderbuffer *
-st_new_renderbuffer_fb(enum pipe_format format, int samples, boolean sw);
+st_new_renderbuffer_fb(enum pipe_format format, unsigned samples, boolean sw);
 
 extern void
 st_update_renderbuffer_surface(struct st_context *st,

@@ -238,6 +238,11 @@ int
 gbm_device_is_format_supported(struct gbm_device *gbm,
                                uint32_t format, uint32_t usage);
 
+int
+gbm_device_get_format_modifier_plane_count(struct gbm_device *gbm,
+                                           uint32_t format,
+                                           uint64_t modifier);
+
 void
 gbm_device_destroy(struct gbm_device *gbm);
 
@@ -334,6 +339,9 @@ uint32_t
 gbm_bo_get_format(struct gbm_bo *bo);
 
 uint32_t
+gbm_bo_get_bpp(struct gbm_bo *bo);
+
+uint32_t
 gbm_bo_get_offset(struct gbm_bo *bo, int plane);
 
 struct gbm_device *
@@ -378,8 +386,6 @@ gbm_surface_create_with_modifiers(struct gbm_device *gbm,
                                   uint32_t format,
                                   const uint64_t *modifiers,
                                   const unsigned int count);
-int
-gbm_surface_needs_lock_front_buffer(struct gbm_surface *surface);
 
 struct gbm_bo *
 gbm_surface_lock_front_buffer(struct gbm_surface *surface);

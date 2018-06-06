@@ -19,9 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * Authors: Tom Stellard <thomas.stellard@amd.com>
- *
  */
 
 #ifndef AC_BINARY_H
@@ -36,31 +33,32 @@ struct ac_shader_reloc {
 };
 
 struct ac_shader_binary {
+	unsigned code_size;
+	unsigned config_size;
+	/** The number of bytes of config information for each global symbol.
+	 */
+	unsigned config_size_per_symbol;
+	unsigned rodata_size;
+	unsigned global_symbol_count;
+	unsigned reloc_count;
+
 	/** Shader code */
 	unsigned char *code;
-	unsigned code_size;
 
 	/** Config/Context register state that accompanies this shader.
 	 * This is a stream of dword pairs.  First dword contains the
 	 * register address, the second dword contains the value.*/
 	unsigned char *config;
-	unsigned config_size;
 
-	/** The number of bytes of config information for each global symbol.
-	 */
-	unsigned config_size_per_symbol;
 
 	/** Constant data accessed by the shader.  This will be uploaded
 	 * into a constant buffer. */
 	unsigned char *rodata;
-	unsigned rodata_size;
 
 	/** List of symbol offsets for the shader */
 	uint64_t *global_symbol_offsets;
-	unsigned global_symbol_count;
 
 	struct ac_shader_reloc *relocs;
-	unsigned reloc_count;
 
 	/** Disassembled shader in a string. */
 	char *disasm_string;
@@ -98,5 +96,6 @@ void ac_shader_binary_read_config(struct ac_shader_binary *binary,
 				  struct ac_shader_config *conf,
 				  unsigned symbol_offset,
 				  bool supports_spill);
+void ac_shader_binary_clean(struct ac_shader_binary *b);
 
 #endif /* AC_BINARY_H */

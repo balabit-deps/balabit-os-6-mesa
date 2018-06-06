@@ -27,9 +27,10 @@
 
 #include "ac_surface.h"
 #include "amd_family.h"
-#include "amdgpu_id.h"
+#include "addrlib/amdgpu_asic_addr.h"
 #include "ac_gpu_info.h"
 #include "util/macros.h"
+#include "util/u_atomic.h"
 #include "util/u_math.h"
 
 #include <errno.h>
@@ -48,90 +49,95 @@
 #define CIASICIDGFXENGINE_ARCTICISLAND 0x0000000D
 #endif
 
+static unsigned get_first(unsigned x, unsigned y)
+{
+	return x;
+}
+
 static void addrlib_family_rev_id(enum radeon_family family,
-				  unsigned *addrlib_family,
-				  unsigned *addrlib_revid)
+                                 unsigned *addrlib_family,
+                                 unsigned *addrlib_revid)
 {
 	switch (family) {
 	case CHIP_TAHITI:
 		*addrlib_family = FAMILY_SI;
-		*addrlib_revid = SI_TAHITI_P_A0;
+		*addrlib_revid = get_first(AMDGPU_TAHITI_RANGE);
 		break;
 	case CHIP_PITCAIRN:
 		*addrlib_family = FAMILY_SI;
-		*addrlib_revid = SI_PITCAIRN_PM_A0;
+		*addrlib_revid = get_first(AMDGPU_PITCAIRN_RANGE);
 		break;
 	case CHIP_VERDE:
 		*addrlib_family = FAMILY_SI;
-		*addrlib_revid = SI_CAPEVERDE_M_A0;
+		*addrlib_revid =  get_first(AMDGPU_CAPEVERDE_RANGE);
 		break;
 	case CHIP_OLAND:
 		*addrlib_family = FAMILY_SI;
-		*addrlib_revid = SI_OLAND_M_A0;
+		*addrlib_revid = get_first(AMDGPU_OLAND_RANGE);
 		break;
 	case CHIP_HAINAN:
 		*addrlib_family = FAMILY_SI;
-		*addrlib_revid = SI_HAINAN_V_A0;
+		*addrlib_revid = get_first(AMDGPU_HAINAN_RANGE);
 		break;
 	case CHIP_BONAIRE:
 		*addrlib_family = FAMILY_CI;
-		*addrlib_revid = CI_BONAIRE_M_A0;
+		*addrlib_revid = get_first(AMDGPU_BONAIRE_RANGE);
 		break;
 	case CHIP_KAVERI:
 		*addrlib_family = FAMILY_KV;
-		*addrlib_revid = KV_SPECTRE_A0;
+		*addrlib_revid = get_first(AMDGPU_SPECTRE_RANGE);
 		break;
 	case CHIP_KABINI:
 		*addrlib_family = FAMILY_KV;
-		*addrlib_revid = KB_KALINDI_A0;
+		*addrlib_revid = get_first(AMDGPU_KALINDI_RANGE);
 		break;
 	case CHIP_HAWAII:
 		*addrlib_family = FAMILY_CI;
-		*addrlib_revid = CI_HAWAII_P_A0;
+		*addrlib_revid = get_first(AMDGPU_HAWAII_RANGE);
 		break;
 	case CHIP_MULLINS:
 		*addrlib_family = FAMILY_KV;
-		*addrlib_revid = ML_GODAVARI_A0;
+		*addrlib_revid = get_first(AMDGPU_GODAVARI_RANGE);
 		break;
 	case CHIP_TONGA:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_TONGA_P_A0;
+		*addrlib_revid = get_first(AMDGPU_TONGA_RANGE);
 		break;
 	case CHIP_ICELAND:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_ICELAND_M_A0;
+		*addrlib_revid = get_first(AMDGPU_ICELAND_RANGE);
 		break;
 	case CHIP_CARRIZO:
 		*addrlib_family = FAMILY_CZ;
-		*addrlib_revid = CARRIZO_A0;
+		*addrlib_revid = get_first(AMDGPU_CARRIZO_RANGE);
 		break;
 	case CHIP_STONEY:
 		*addrlib_family = FAMILY_CZ;
-		*addrlib_revid = STONEY_A0;
+		*addrlib_revid = get_first(AMDGPU_STONEY_RANGE);
 		break;
 	case CHIP_FIJI:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_FIJI_P_A0;
+		*addrlib_revid = get_first(AMDGPU_FIJI_RANGE);
 		break;
 	case CHIP_POLARIS10:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_POLARIS10_P_A0;
+		*addrlib_revid = get_first(AMDGPU_POLARIS10_RANGE);
 		break;
 	case CHIP_POLARIS11:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_POLARIS11_M_A0;
+		*addrlib_revid = get_first(AMDGPU_POLARIS11_RANGE);
 		break;
 	case CHIP_POLARIS12:
 		*addrlib_family = FAMILY_VI;
-		*addrlib_revid = VI_POLARIS12_V_A0;
+		*addrlib_revid = get_first(AMDGPU_POLARIS12_RANGE);
 		break;
 	case CHIP_VEGA10:
 		*addrlib_family = FAMILY_AI;
-		*addrlib_revid = AI_VEGA10_P_A0;
+		*addrlib_revid = get_first(AMDGPU_VEGA10_RANGE);
 		break;
 	case CHIP_RAVEN:
 		*addrlib_family = FAMILY_RV;
-		*addrlib_revid = RAVEN_A0;
+		*addrlib_revid = get_first(AMDGPU_RAVEN_RANGE);
 		break;
 	default:
 		fprintf(stderr, "amdgpu: Unknown family.\n");
@@ -166,7 +172,7 @@ ADDR_HANDLE amdgpu_addr_create(const struct radeon_info *info,
 	regValue.gbAddrConfig = amdinfo->gb_addr_cfg;
 	createFlags.value = 0;
 
-	addrlib_family_rev_id(info->family, &addrCreateInput.chipFamily, &addrCreateInput.chipRevision);
+       addrlib_family_rev_id(info->family, &addrCreateInput.chipFamily, &addrCreateInput.chipRevision);
 	if (addrCreateInput.chipFamily == FAMILY_UNKNOWN)
 		return NULL;
 
@@ -298,7 +304,7 @@ static int gfx6_compute_level(ADDR_HANDLE addrlib,
 
 	surf_level = is_stencil ? &surf->u.legacy.stencil_level[level] : &surf->u.legacy.level[level];
 	surf_level->offset = align64(surf->surf_size, AddrSurfInfoOut->baseAlign);
-	surf_level->slice_size = AddrSurfInfoOut->sliceSize;
+	surf_level->slice_size_dw = AddrSurfInfoOut->sliceSize / 4;
 	surf_level->nblk_x = AddrSurfInfoOut->pitch;
 	surf_level->nblk_y = AddrSurfInfoOut->height;
 
@@ -406,12 +412,16 @@ static unsigned cik_get_macro_tile_index(struct radeon_surf *surf)
 }
 
 /**
+ * This must be called after the first level is computed.
+ *
  * Copy surface-global settings like pipe/bank config from level 0 surface
- * computation.
+ * computation, and compute tile swizzle.
  */
-static void gfx6_surface_settings(const struct radeon_info* info,
-				  ADDR_COMPUTE_SURFACE_INFO_OUTPUT* csio,
-				  struct radeon_surf *surf)
+static int gfx6_surface_settings(ADDR_HANDLE addrlib,
+				 const struct radeon_info *info,
+				 const struct ac_surf_config *config,
+				 ADDR_COMPUTE_SURFACE_INFO_OUTPUT* csio,
+				 struct radeon_surf *surf)
 {
 	surf->surf_alignment = csio->baseAlign;
 	surf->u.legacy.pipe_config = csio->pTileInfo->pipeConfig - 1;
@@ -428,6 +438,36 @@ static void gfx6_surface_settings(const struct radeon_info* info,
 	} else {
 		surf->u.legacy.macro_tile_index = 0;
 	}
+
+	/* Compute tile swizzle. */
+	/* TODO: fix tile swizzle with mipmapping for SI */
+	if ((info->chip_class >= CIK || config->info.levels == 1) &&
+	    config->info.surf_index &&
+	    surf->u.legacy.level[0].mode == RADEON_SURF_MODE_2D &&
+	    !(surf->flags & (RADEON_SURF_Z_OR_SBUFFER | RADEON_SURF_SHAREABLE)) &&
+	    (config->info.samples > 1 || !(surf->flags & RADEON_SURF_SCANOUT))) {
+		ADDR_COMPUTE_BASE_SWIZZLE_INPUT AddrBaseSwizzleIn = {0};
+		ADDR_COMPUTE_BASE_SWIZZLE_OUTPUT AddrBaseSwizzleOut = {0};
+
+		AddrBaseSwizzleIn.size = sizeof(ADDR_COMPUTE_BASE_SWIZZLE_INPUT);
+		AddrBaseSwizzleOut.size = sizeof(ADDR_COMPUTE_BASE_SWIZZLE_OUTPUT);
+
+		AddrBaseSwizzleIn.surfIndex = p_atomic_inc_return(config->info.surf_index) - 1;
+		AddrBaseSwizzleIn.tileIndex = csio->tileIndex;
+		AddrBaseSwizzleIn.macroModeIndex = csio->macroModeIndex;
+		AddrBaseSwizzleIn.pTileInfo = csio->pTileInfo;
+		AddrBaseSwizzleIn.tileMode = csio->tileMode;
+
+		int r = AddrComputeBaseSwizzle(addrlib, &AddrBaseSwizzleIn,
+					       &AddrBaseSwizzleOut);
+		if (r != ADDR_OK)
+			return r;
+
+		assert(AddrBaseSwizzleOut.tileSwizzle <=
+		       u_bit_consecutive(0, sizeof(surf->tile_swizzle) * 8));
+		surf->tile_swizzle = AddrBaseSwizzleOut.tileSwizzle;
+	}
+	return 0;
 }
 
 /**
@@ -546,7 +586,7 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 		info->chip_class >= VI &&
 		!(surf->flags & RADEON_SURF_Z_OR_SBUFFER) &&
 		!(surf->flags & RADEON_SURF_DISABLE_DCC) &&
-		!compressed && AddrDccIn.numSamples <= 1 &&
+		!compressed &&
 		((config->info.array_size == 1 && config->info.depth == 1) ||
 		 config->info.levels == 1);
 
@@ -640,6 +680,7 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 		}
 	}
 
+	surf->has_stencil = !!(surf->flags & RADEON_SURF_SBUFFER);
 	surf->num_dcc_levels = 0;
 	surf->surf_size = 0;
 	surf->dcc_size = 0;
@@ -683,7 +724,10 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 				assert(stencil_tile_idx >= 0);
 			}
 
-			gfx6_surface_settings(info, &AddrSurfInfoOut, surf);
+			r = gfx6_surface_settings(addrlib, info, config,
+						  &AddrSurfInfoOut, surf);
+			if (r)
+				return r;
 		}
 	}
 
@@ -716,8 +760,12 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 			}
 
 			if (level == 0) {
-				if (only_stencil)
-					gfx6_surface_settings(info, &AddrSurfInfoOut, surf);
+				if (only_stencil) {
+					r = gfx6_surface_settings(addrlib, info, config,
+								  &AddrSurfInfoOut, surf);
+					if (r)
+						return r;
+				}
 
 				/* For 2D modes only. */
 				if (AddrSurfInfoOut.tileMode >= ADDR_TM_2D_TILED_THIN1) {
@@ -733,9 +781,16 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 	 * complicated.
 	 */
 	if (surf->dcc_size && config->info.levels > 1) {
+		/* The smallest miplevels that are never compressed by DCC
+		 * still read the DCC buffer via TC if the base level uses DCC,
+		 * and for some reason the DCC buffer needs to be larger if
+		 * the miptree uses non-zero tile_swizzle. Otherwise there are
+		 * VM faults.
+		 *
+		 * "dcc_alignment * 4" was determined by trial and error.
+		 */
 		surf->dcc_size = align64(surf->surf_size >> 8,
-					 info->pipe_interleave_bytes *
-					 info->num_tile_pipes);
+					 surf->dcc_alignment * 4);
 	}
 
 	/* Make sure HTILE covers the whole miptree, because the shader reads
@@ -745,20 +800,9 @@ static int gfx6_compute_surface(ADDR_HANDLE addrlib,
 		surf->htile_size *= 2;
 
 	surf->is_linear = surf->u.legacy.level[0].mode == RADEON_SURF_MODE_LINEAR_ALIGNED;
-
-	/* workout base swizzle */
-	if (!(surf->flags & RADEON_SURF_Z_OR_SBUFFER)) {
-		ADDR_COMPUTE_BASE_SWIZZLE_INPUT AddrBaseSwizzleIn = {0};
-		ADDR_COMPUTE_BASE_SWIZZLE_OUTPUT AddrBaseSwizzleOut = {0};
-
-		AddrBaseSwizzleIn.surfIndex = config->info.surf_index;
-		AddrBaseSwizzleIn.tileIndex = AddrSurfInfoIn.tileIndex;
-		AddrBaseSwizzleIn.macroModeIndex = AddrSurfInfoOut.macroModeIndex;
-		AddrBaseSwizzleIn.pTileInfo = AddrSurfInfoOut.pTileInfo;
-		AddrBaseSwizzleIn.tileMode = AddrSurfInfoOut.tileMode;
-		AddrComputeBaseSwizzle(addrlib, &AddrBaseSwizzleIn, &AddrBaseSwizzleOut);
-		surf->u.legacy.tile_swizzle = AddrBaseSwizzleOut.tileSwizzle;
-	}
+	surf->is_displayable = surf->is_linear ||
+			       surf->micro_tile_mode == RADEON_MICRO_MODE_DISPLAY ||
+			       surf->micro_tile_mode == RADEON_MICRO_MODE_ROTATED;
 	return 0;
 }
 
@@ -817,7 +861,7 @@ static int gfx9_compute_miptree(ADDR_HANDLE addrlib,
 
 	ret = Addr2ComputeSurfaceInfo(addrlib, in, &out);
 	if (ret != ADDR_OK)
-	return ret;
+		return ret;
 
 	if (in->flags.stencil) {
 		surf->u.gfx9.stencil.swizzle_mode = in->swizzleMode;
@@ -881,11 +925,8 @@ static int gfx9_compute_miptree(ADDR_HANDLE addrlib,
 	} else {
 		/* DCC */
 		if (!(surf->flags & RADEON_SURF_DISABLE_DCC) &&
-		    !(surf->flags & RADEON_SURF_SCANOUT) &&
 		    !compressed &&
-		    in->swizzleMode != ADDR_SW_LINEAR &&
-		    /* TODO: We could support DCC with MSAA. */
-		    in->numSamples == 1) {
+		    in->swizzleMode != ADDR_SW_LINEAR) {
 			ADDR2_COMPUTE_DCCINFO_INPUT din = {0};
 			ADDR2_COMPUTE_DCCINFO_OUTPUT dout = {0};
 			ADDR2_META_MIP_INFO meta_mip_info[RADEON_SURF_MAX_LEVELS] = {};
@@ -1101,6 +1142,7 @@ static int gfx9_compute_surface(ADDR_HANDLE addrlib,
 	}
 
 	surf->u.gfx9.resource_type = AddrSurfInfoIn.resourceType;
+	surf->has_stencil = !!(surf->flags & RADEON_SURF_SBUFFER);
 
 	surf->num_dcc_levels = 0;
 	surf->surf_size = 0;
@@ -1136,6 +1178,14 @@ static int gfx9_compute_surface(ADDR_HANDLE addrlib,
 	}
 
 	surf->is_linear = surf->u.gfx9.surf.swizzle_mode == ADDR_SW_LINEAR;
+
+	/* Query whether the surface is displayable. */
+	bool displayable = false;
+	r = Addr2IsValidDisplaySwizzleMode(addrlib, surf->u.gfx9.surf.swizzle_mode,
+					   surf->bpe * 8, &displayable);
+	if (r)
+		return r;
+	surf->is_displayable = displayable;
 
 	switch (surf->u.gfx9.surf.swizzle_mode) {
 		/* S = standard. */

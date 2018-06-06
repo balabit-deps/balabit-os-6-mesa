@@ -49,6 +49,7 @@
 #include "main/syncobj.h"
 #include "main/barrier.h"
 #include "main/transformfeedback.h"
+#include "main/externalobjects.h"
 
 #include "program/program.h"
 #include "tnl/tnl.h"
@@ -100,7 +101,6 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->TestProxyTexImage = _mesa_test_proxy_teximage;
    driver->CompressedTexImage = _mesa_store_compressed_teximage;
    driver->CompressedTexSubImage = _mesa_store_compressed_texsubimage;
-   driver->GetCompressedTexSubImage = _mesa_GetCompressedTexSubImage_sw;
    driver->BindTexture = NULL;
    driver->NewTextureObject = _mesa_new_texture_object;
    driver->DeleteTexture = _mesa_delete_texture_object;
@@ -165,6 +165,9 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    _mesa_init_query_object_functions(driver);
 
    _mesa_init_sync_object_functions(driver);
+
+   /* memory objects */
+   _mesa_init_memory_object_functions(driver);
 
    driver->NewFramebuffer = _mesa_new_framebuffer;
    driver->NewRenderbuffer = _swrast_new_soft_renderbuffer;

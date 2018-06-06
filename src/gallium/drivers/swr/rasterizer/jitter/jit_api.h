@@ -63,6 +63,7 @@ struct JIT_COMPILE_INPUT
     size_t irLength;
 
     bool enableJitSampler;
+
 };
 
 extern "C"

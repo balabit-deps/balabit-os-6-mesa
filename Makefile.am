@@ -35,6 +35,7 @@ AM_DISTCHECK_CONFIGURE_FLAGS = \
 	--enable-glx-tls \
 	--enable-nine \
 	--enable-opencl \
+	--enable-opencl-icd \
 	--enable-opengl \
 	--enable-va \
 	--enable-vdpau \
@@ -54,9 +55,17 @@ EXTRA_DIST = \
 	common.py \
 	docs \
 	doxygen \
-	bin/git_sha1_gen.sh \
+	bin/git_sha1_gen.py \
 	scons \
-	SConstruct
+	SConstruct \
+	build-support/conftest.dyn \
+	build-support/conftest.map \
+	meson.build \
+	meson_options.txt \
+	bin/meson.build \
+	include/meson.build \
+	bin/install_megadrivers.py \
+	bin/meson_get_version.py
 
 noinst_HEADERS = \
 	include/c99_alloca.h \

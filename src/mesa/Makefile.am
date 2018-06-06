@@ -21,6 +21,11 @@
 
 SUBDIRS = . main/tests
 
+# state tracker tests depend on libmesagallium.la
+if HAVE_GALLIUM
+SUBDIRS += state_tracker/tests
+endif
+
 if HAVE_XLIB_GLX
 SUBDIRS += drivers/x11
 endif
@@ -37,6 +42,9 @@ include Makefile.sources
 
 EXTRA_DIST = \
 	drivers/SConscript \
+	main/meson.build \
+	program/meson.build \
+	meson.build \
 	main/format_fallback.py \
 	main/format_info.py \
 	main/format_pack.py \

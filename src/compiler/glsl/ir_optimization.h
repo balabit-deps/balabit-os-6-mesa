@@ -123,9 +123,8 @@ bool lower_if_to_cond_assign(gl_shader_stage stage, exec_list *instructions,
                              unsigned max_depth = 0, unsigned min_branch_cost = 0);
 bool do_mat_op_to_vec(exec_list *instructions);
 bool do_minmax_prune(exec_list *instructions);
-bool do_noop_swizzle(exec_list *instructions);
 bool do_structure_splitting(exec_list *instructions);
-bool do_swizzle_swizzle(exec_list *instructions);
+bool optimize_swizzles(exec_list *instructions);
 bool do_vectorize(exec_list *instructions);
 bool do_tree_grafting(exec_list *instructions);
 bool do_vec_index_to_cond_assign(exec_list *instructions);
@@ -143,10 +142,11 @@ bool lower_clip_cull_distance(struct gl_shader_program *prog,
                               gl_linked_shader *shader);
 void lower_output_reads(unsigned stage, exec_list *instructions);
 bool lower_packing_builtins(exec_list *instructions, int op_mask);
-void lower_shared_reference(struct gl_linked_shader *shader,
-                            unsigned *shared_size);
+void lower_shared_reference(struct gl_context *ctx,
+                            struct gl_shader_program *prog,
+                            struct gl_linked_shader *shader);
 void lower_ubo_reference(struct gl_linked_shader *shader,
-                         bool clamp_block_indices);
+                         bool clamp_block_indices, bool use_std430_as_default);
 void lower_packed_varyings(void *mem_ctx,
                            unsigned locations_used,
                            const uint8_t *components,
@@ -171,9 +171,11 @@ bool lower_blend_equation_advanced(gl_linked_shader *shader);
 bool lower_subroutine(exec_list *instructions, struct _mesa_glsl_parse_state *state);
 void propagate_invariance(exec_list *instructions);
 
-ir_rvalue *
-compare_index_block(exec_list *instructions, ir_variable *index,
-		    unsigned base, unsigned components, void *mem_ctx);
+namespace ir_builder { class ir_factory; };
+
+ir_variable *compare_index_block(ir_builder::ir_factory &body,
+                                 ir_variable *index,
+                                 unsigned base, unsigned components);
 
 bool lower_64bit_integer_instructions(exec_list *instructions,
                                       unsigned what_to_lower);

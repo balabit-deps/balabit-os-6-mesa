@@ -1,3 +1,17 @@
+mesa (18.0.5-0ubuntu0~16.04.1) xenial; urgency=medium
+
+  * Sync new upstream release from bionic. (LP: #1772632, #1753954)
+    - migrate to llvm-6.0, bump libclc
+    - update libgbm1.symbols
+    - drop upstreamed patches
+    - disable intel CCS compression to avoid corruption when logging in
+      with Xorg
+    - gallium: don't enable 10bpc by default
+    - refresh Mir patches
+    - fix disabling omx bellagio
+
+ -- Timo Aaltonen <tjaalton@debian.org>  Wed, 06 Jun 2018 10:16:27 +0300
+
 mesa (17.2.8-0ubuntu0~16.04.1) xenial; urgency=medium
 
   * New upstream bugfix release. (LP: #1741189)

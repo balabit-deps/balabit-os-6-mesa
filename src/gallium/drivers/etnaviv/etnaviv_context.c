@@ -34,6 +34,7 @@
 #include "etnaviv_emit.h"
 #include "etnaviv_fence.h"
 #include "etnaviv_query.h"
+#include "etnaviv_query_hw.h"
 #include "etnaviv_rasterizer.h"
 #include "etnaviv_screen.h"
 #include "etnaviv_shader.h"
@@ -187,6 +188,8 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
          BUG("Index buffer upload failed.");
          return;
       }
+      /* Add start to index offset, when rendering indexed */
+      index_offset += info->start * info->index_size;
 
       ctx->index_buffer.FE_INDEX_STREAM_BASE_ADDR.bo = etna_resource(indexbuf)->bo;
       ctx->index_buffer.FE_INDEX_STREAM_BASE_ADDR.offset = index_offset;
@@ -260,6 +263,9 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
       if (ctx->sampler_view[i])
          resource_read(ctx, ctx->sampler_view[i]->texture);
 
+   list_for_each_entry(struct etna_hw_query, hq, &ctx->active_hw_queries, node)
+      resource_written(ctx, hq->prsc);
+
    ctx->stats.prims_emitted += u_reduced_prims_for_vertices(info->mode, info->count);
    ctx->stats.draw_calls++;
 
@@ -269,10 +275,16 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info)
    /* First, sync state, then emit DRAW_PRIMITIVES or DRAW_INDEXED_PRIMITIVES */
    etna_emit_state(ctx);
 
-   if (info->index_size)
-      etna_draw_indexed_primitives(ctx->stream, draw_mode, info->start, prims, info->index_bias);
-   else
-      etna_draw_primitives(ctx->stream, draw_mode, info->start, prims);
+   if (ctx->specs.halti >= 2) {
+      /* On HALTI2+ (GC3000 and higher) only use instanced drawing commands, as the blob does */
+      etna_draw_instanced(ctx->stream, info->index_size, draw_mode, 1,
+         info->count, info->index_size ? info->index_bias : info->start);
+   } else {
+      if (info->index_size)
+         etna_draw_indexed_primitives(ctx->stream, draw_mode, 0, prims, info->index_bias);
+      else
+         etna_draw_primitives(ctx->stream, draw_mode, info->start, prims);
+   }
 
    if (DBG_ENABLED(ETNA_DBG_DRAW_STALL)) {
       /* Stall the FE after every draw operation.  This allows better
@@ -299,9 +311,15 @@ etna_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
    struct etna_context *ctx = etna_context(pctx);
    int out_fence_fd = -1;
 
+   list_for_each_entry(struct etna_hw_query, hq, &ctx->active_hw_queries, node)
+      etna_hw_query_suspend(hq, ctx);
+
    etna_cmd_stream_flush2(ctx->stream, ctx->in_fence_fd,
 			  (flags & PIPE_FLUSH_FENCE_FD) ? &out_fence_fd :
 			  NULL);
+
+   list_for_each_entry(struct etna_hw_query, hq, &ctx->active_hw_queries, node)
+      etna_hw_query_resume(hq, ctx);
 
    if (fence)
       *fence = etna_fence_create(pctx, out_fence_fd);
@@ -315,13 +333,56 @@ etna_cmd_stream_reset_notify(struct etna_cmd_stream *stream, void *priv)
 
    etna_set_state(stream, VIVS_GL_API_MODE, VIVS_GL_API_MODE_OPENGL);
    etna_set_state(stream, VIVS_GL_VERTEX_ELEMENT_CONFIG, 0x00000001);
+   /* blob sets this to 0x40000031 on GC7000, seems to make no difference,
+    * but keep it in mind if depth behaves strangely. */
    etna_set_state(stream, VIVS_RA_EARLY_DEPTH, 0x00000031);
    etna_set_state(stream, VIVS_PA_W_CLIP_LIMIT, 0x34000001);
+   etna_set_state(stream, VIVS_PA_FLAGS, 0x00000000); /* blob sets ZCONVERT_BYPASS on GC3000+, this messes up z for us */
+   etna_set_state(stream, VIVS_PA_VIEWPORT_UNK00A80, 0x38a01404);
+   etna_set_state(stream, VIVS_PA_VIEWPORT_UNK00A84, fui(8192.0));
+   etna_set_state(stream, VIVS_PA_ZFARCLIPPING, 0x00000000);
+   etna_set_state(stream, VIVS_PE_ALPHA_COLOR_EXT0, 0x00000000);
+   etna_set_state(stream, VIVS_PE_ALPHA_COLOR_EXT1, 0x00000000);
+   etna_set_state(stream, VIVS_RA_HDEPTH_CONTROL, 0x00007000);
+   etna_set_state(stream, VIVS_PE_STENCIL_CONFIG_EXT2, 0x00000000);
+   etna_set_state(stream, VIVS_PS_CONTROL_EXT, 0x00000000);
 
-   /* Enable SINGLE_BUFFER for resolve, if supported */
-   etna_set_state(stream, VIVS_RS_SINGLE_BUFFER, COND(ctx->specs.single_buffer, VIVS_RS_SINGLE_BUFFER_ENABLE));
+   /* There is no HALTI0 specific state */
+   if (ctx->specs.halti >= 1) { /* Only on HALTI1+ */
+      etna_set_state(stream, VIVS_VS_HALTI1_UNK00884, 0x00000808);
+   }
+   if (ctx->specs.halti >= 2) { /* Only on HALTI2+ */
+      etna_set_state(stream, VIVS_RA_UNK00E0C, 0x00000000);
+   }
+   if (ctx->specs.halti >= 3) { /* Only on HALTI3+ */
+      etna_set_state(stream, VIVS_PE_MEM_CONFIG, 0x00000000); /* TODO: cache modes */
+      etna_set_state(stream, VIVS_PS_HALTI3_UNK0103C, 0x76543210);
+   }
+   if (ctx->specs.halti >= 4) { /* Only on HALTI4+ */
+      etna_set_state(stream, VIVS_PS_MSAA_CONFIG, 0x6fffffff & 0xf70fffff & 0xfff6ffff &
+                                                  0xffff6fff & 0xfffff6ff & 0xffffff7f);
+      etna_set_state(stream, VIVS_PE_HALTI4_UNK014C0, 0x00000000);
+   }
+   if (ctx->specs.halti >= 5) { /* Only on HALTI5+ */
+      etna_set_state(stream, VIVS_NTE_DESCRIPTOR_UNK14C40, 0x00000001);
+      etna_set_state(stream, VIVS_FE_HALTI5_UNK007D8, 0x00000002);
+      etna_set_state(stream, VIVS_FE_HALTI5_UNK007C4, 0x00000000);
+      etna_set_state(stream, VIVS_PS_SAMPLER_BASE, 0x00000000);
+      etna_set_state(stream, VIVS_VS_SAMPLER_BASE, 0x00000020);
+      etna_set_state(stream, VIVS_SH_CONFIG, VIVS_SH_CONFIG_RTNE_ROUNDING);
+   } else { /* Only on pre-HALTI5 */
+      etna_set_state(stream, VIVS_GL_UNK03834, 0x00000000);
+      etna_set_state(stream, VIVS_GL_UNK03838, 0x00000000);
+      etna_set_state(stream, VIVS_GL_UNK03854, 0x00000000);
+   }
+
+   if (!ctx->specs.use_blt) {
+      /* Enable SINGLE_BUFFER for resolve, if supported */
+      etna_set_state(stream, VIVS_RS_SINGLE_BUFFER, COND(ctx->specs.single_buffer, VIVS_RS_SINGLE_BUFFER_ENABLE));
+   }
 
    ctx->dirty = ~0L;
+   ctx->dirty_sampler_views = ~0L;
 
    /* go through all the used resources and clear their status flag */
    LIST_FOR_EACH_ENTRY_SAFE(rsc, rsc_tmp, &ctx->used_resources, list)
@@ -423,6 +484,7 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
       goto fail;
 
    slab_create_child(&ctx->transfer_pool, &screen->transfer_pool);
+   list_inithead(&ctx->active_hw_queries);
 
    return pctx;
 

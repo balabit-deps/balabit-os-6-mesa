@@ -32,6 +32,8 @@
 #include "util/u_format.h"
 #include "tgsi/tgsi_dump.h"
 
+#include <inttypes.h>
+
 #include "u_dump.h"
 
 
@@ -75,6 +77,14 @@ util_dump_float(FILE *stream, double value)
    util_stream_writef(stream, "%g", value);
 }
 
+void
+util_dump_ns(FILE *f, uint64_t time)
+{
+   uint64_t secs = time / (1000*1000*1000);
+   unsigned usecs = (time % (1000*1000*1000)) / 1000;
+   fprintf(f, "%"PRIu64".%06us", secs, usecs);
+}
+
 static void
 util_dump_string(FILE *stream, const char *str)
 {
@@ -102,7 +112,7 @@ util_dump_array_end(FILE *stream)
 }
 
 static void
-util_dump_elem_begin(FILE *stream)
+util_dump_elem_begin(UNUSED FILE *stream)
 {
 }
 
@@ -113,7 +123,7 @@ util_dump_elem_end(FILE *stream)
 }
 
 static void
-util_dump_struct_begin(FILE *stream, const char *name)
+util_dump_struct_begin(FILE *stream, UNUSED const char *name)
 {
    fputs("{", stream);
 }
@@ -142,11 +152,11 @@ util_dump_null(FILE *stream)
    fputs("NULL", stream);
 }
 
-static void
+void
 util_dump_ptr(FILE *stream, const void *value)
 {
    if(value)
-      util_stream_writef(stream, "0x%08lx", (unsigned long)(uintptr_t)value);
+      util_stream_writef(stream, "%p", value);
    else
       util_dump_null(stream);
 }
@@ -232,55 +242,55 @@ util_dump_format(FILE *stream, enum pipe_format format)
 static void
 util_dump_enum_blend_factor(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_blend_factor(value, TRUE));
+   util_dump_enum(stream, util_str_blend_factor(value, TRUE));
 }
 
 static void
 util_dump_enum_blend_func(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_blend_func(value, TRUE));
+   util_dump_enum(stream, util_str_blend_func(value, TRUE));
 }
 
 static void
 util_dump_enum_func(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_func(value, TRUE));
+   util_dump_enum(stream, util_str_func(value, TRUE));
 }
 
 static void
 util_dump_enum_prim_mode(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_prim_mode(value, TRUE));
+   util_dump_enum(stream, util_str_prim_mode(value, TRUE));
 }
 
 static void
 util_dump_enum_tex_target(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_tex_target(value, TRUE));
+   util_dump_enum(stream, util_str_tex_target(value, TRUE));
 }
 
 static void
 util_dump_enum_tex_filter(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_tex_filter(value, TRUE));
+   util_dump_enum(stream, util_str_tex_filter(value, TRUE));
 }
 
 static void
 util_dump_enum_tex_mipfilter(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_tex_mipfilter(value, TRUE));
+   util_dump_enum(stream, util_str_tex_mipfilter(value, TRUE));
 }
 
 static void
 util_dump_enum_tex_wrap(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_tex_wrap(value, TRUE));
+   util_dump_enum(stream, util_str_tex_wrap(value, TRUE));
 }
 
 static void
 util_dump_enum_stencil_op(FILE *stream, unsigned value)
 {
-   util_dump_enum(stream, util_dump_stencil_op(value, TRUE));
+   util_dump_enum(stream, util_str_stencil_op(value, TRUE));
 }
 
 
@@ -802,7 +812,7 @@ util_dump_transfer(FILE *stream, const struct pipe_transfer *state)
 
    util_dump_member(stream, ptr, state, resource);
    util_dump_member(stream, uint, state, level);
-   util_dump_member(stream, uint, state, usage);
+   util_dump_member(stream, transfer_usage, state, usage);
    util_dump_member_begin(stream, "box");
    util_dump_box(stream, &state->box);
    util_dump_member_end(stream);
@@ -919,9 +929,15 @@ util_dump_draw_info(FILE *stream, const struct pipe_draw_info *state)
    util_dump_member(stream, uint, state, max_index);
 
    util_dump_member(stream, bool, state, primitive_restart);
-   util_dump_member(stream, uint, state, restart_index);
+   if (state->primitive_restart)
+      util_dump_member(stream, uint, state, restart_index);
 
-   util_dump_member(stream, ptr, state, index.resource);
+   if (state->index_size) {
+      if (state->has_user_indices)
+         util_dump_member(stream, ptr, state, index.user);
+      else
+         util_dump_member(stream, ptr, state, index.resource);
+   }
    util_dump_member(stream, ptr, state, count_from_stream_output);
 
    if (!state->indirect) {

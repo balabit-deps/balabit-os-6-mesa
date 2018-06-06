@@ -26,7 +26,6 @@
 #ifndef FBOBJECT_H
 #define FBOBJECT_H
 
-#include "compiler.h"
 #include "glheader.h"
 #include <stdbool.h>
 
@@ -112,7 +111,7 @@ extern GLboolean
 _mesa_is_legal_color_format(const struct gl_context *ctx, GLenum baseFormat);
 
 extern GLenum
-_mesa_base_fbo_format(struct gl_context *ctx, GLenum internalFormat);
+_mesa_base_fbo_format(const struct gl_context *ctx, GLenum internalFormat);
 
 extern bool
 _mesa_detach_renderbuffer(struct gl_context *ctx,
@@ -280,10 +279,21 @@ extern void GLAPIENTRY
 _mesa_NamedFramebufferTexture(GLuint framebuffer, GLenum attachment,
                               GLuint texture, GLint level);
 
+void GLAPIENTRY
+_mesa_FramebufferRenderbuffer_no_error(GLenum target, GLenum attachment,
+                                       GLenum renderbuffertarget,
+                                       GLuint renderbuffer);
+
 extern void GLAPIENTRY
 _mesa_FramebufferRenderbuffer(GLenum target, GLenum attachment,
                                  GLenum renderbuffertarget,
                                  GLuint renderbuffer);
+
+void GLAPIENTRY
+_mesa_NamedFramebufferRenderbuffer_no_error(GLuint framebuffer,
+                                            GLenum attachment,
+                                            GLenum renderbuffertarget,
+                                            GLuint renderbuffer);
 
 extern void GLAPIENTRY
 _mesa_NamedFramebufferRenderbuffer(GLuint framebuffer, GLenum attachment,
@@ -306,6 +316,11 @@ extern void GLAPIENTRY
 _mesa_GetNamedFramebufferParameteriv(GLuint framebuffer, GLenum pname,
                                      GLint *param);
 
+void GLAPIENTRY
+_mesa_InvalidateSubFramebuffer_no_error(GLenum target, GLsizei numAttachments,
+                                        const GLenum *attachments, GLint x,
+                                        GLint y, GLsizei width, GLsizei height);
+
 extern void GLAPIENTRY
 _mesa_InvalidateSubFramebuffer(GLenum target, GLsizei numAttachments,
                                const GLenum *attachments, GLint x, GLint y,
@@ -317,6 +332,9 @@ _mesa_InvalidateNamedFramebufferSubData(GLuint framebuffer,
                                         const GLenum *attachments,
                                         GLint x, GLint y,
                                         GLsizei width, GLsizei height);
+void GLAPIENTRY
+_mesa_InvalidateFramebuffer_no_error(GLenum target, GLsizei numAttachments,
+                                     const GLenum *attachments);
 
 extern void GLAPIENTRY
 _mesa_InvalidateFramebuffer(GLenum target, GLsizei numAttachments,
