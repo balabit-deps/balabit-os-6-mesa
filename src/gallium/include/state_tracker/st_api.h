@@ -91,6 +91,9 @@ enum st_api_feature
 #define ST_CONTEXT_FLAG_ROBUST_ACCESS       (1 << 2)
 #define ST_CONTEXT_FLAG_RESET_NOTIFICATION_ENABLED (1 << 3)
 #define ST_CONTEXT_FLAG_NO_ERROR            (1 << 4)
+#define ST_CONTEXT_FLAG_RELEASE_NONE	    (1 << 5)
+#define ST_CONTEXT_FLAG_HIGH_PRIORITY       (1 << 6)
+#define ST_CONTEXT_FLAG_LOW_PRIORITY        (1 << 7)
 
 /**
  * Reasons that context creation might fail.
@@ -141,27 +144,12 @@ enum st_attachment_type {
 #define ST_ATTACHMENT_SAMPLE_MASK         (1 << ST_ATTACHMENT_SAMPLE)
 
 /**
- * Enumerations of state tracker context resources.
- */
-enum st_context_resource_type {
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_2D,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_3D,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_POSITIVE_X,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_POSITIVE_Y,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_POSITIVE_Z,
-   ST_CONTEXT_RESOURCE_OPENGL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
-   ST_CONTEXT_RESOURCE_OPENGL_RENDERBUFFER,
-   ST_CONTEXT_RESOURCE_OPENVG_PARENT_IMAGE
-};
-
-/**
  * Flush flags.
  */
 #define ST_FLUSH_FRONT                    (1 << 0)
 #define ST_FLUSH_END_OF_FRAME             (1 << 1)
 #define ST_FLUSH_WAIT                     (1 << 2)
+#define ST_FLUSH_FENCE_FD                 (1 << 3)
 
 /**
  * Value to st_manager->get_param function.
@@ -181,19 +169,6 @@ struct pipe_context;
 struct pipe_resource;
 struct pipe_fence_handle;
 struct util_queue_monitoring;
-
-/**
- * Used in st_context_iface->get_resource_for_egl_image.
- */
-struct st_context_resource
-{
-   /* these fields are filled in by the caller */
-   enum st_context_resource_type type;
-   void *resource;
-
-   /* this is owned by the caller */
-   struct pipe_resource *texture;
-};
 
 /**
  * Used in st_manager_iface->get_egl_image.
@@ -227,7 +202,7 @@ struct st_visual
    enum pipe_format color_format;
    enum pipe_format depth_stencil_format;
    enum pipe_format accum_format;
-   int samples;
+   unsigned samples;
 
    /**
     * Desired render buffer.
@@ -246,12 +221,12 @@ struct st_config_options
    boolean disable_shader_bit_encoding;
    boolean force_glsl_extensions_warn;
    unsigned force_glsl_version;
-   boolean force_s3tc_enable;
    boolean allow_glsl_extension_directive_midshader;
    boolean allow_glsl_builtin_variable_redeclaration;
    boolean allow_higher_compat_version;
    boolean glsl_zero_init;
    boolean force_glsl_abs_sqrt;
+   boolean allow_glsl_cross_stage_interpolation_mismatch;
    unsigned char config_options_sha1[20];
 };
 
@@ -366,6 +341,8 @@ struct st_framebuffer_iface
                        const enum st_attachment_type *statts,
                        unsigned count,
                        struct pipe_resource **out);
+   boolean (*flush_swapbuffers) (struct st_context_iface *stctx,
+                                 struct st_framebuffer_iface *stfbi);
 };
 
 /**
@@ -429,14 +406,6 @@ struct st_context_iface
     */
    boolean (*share)(struct st_context_iface *stctxi,
                     struct st_context_iface *stsrci);
-
-   /**
-    * Look up and return the info of a resource for EGLImage.
-    *
-    * This function is optional.
-    */
-   boolean (*get_resource_for_egl_image)(struct st_context_iface *stctxi,
-                                         struct st_context_resource *stres);
 
    /**
     * Start the thread if the API has a worker thread.

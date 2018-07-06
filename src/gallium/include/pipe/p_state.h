@@ -34,6 +34,10 @@
  * Basic notes:
  *   1. Want compact representations, so we use bitfields.
  *   2. Put bitfields before other (GLfloat) fields.
+ *   3. enum bitfields need to be at least one bit extra in size so the most
+ *      significant bit is zero.  MSVC treats enums as signed so if the high
+ *      bit is set, the value will be interpreted as a negative number.
+ *      That causes trouble in various places.
  */
 
 
@@ -71,6 +75,7 @@ extern "C" {
 #define PIPE_MAX_CLIP_OR_CULL_DISTANCE_ELEMENT_COUNT 2
 #define PIPE_MAX_WINDOW_RECTANGLES 8
 
+#define PIPE_MAX_HW_ATOMIC_BUFFERS 32
 
 struct pipe_reference
 {
@@ -123,6 +128,16 @@ struct pipe_rasterizer_state
     * This only makes sense with the Stream Out functionality.
     */
    unsigned rasterizer_discard:1;
+
+   /**
+    * Exposed by PIPE_CAP_TILE_RASTER_ORDER.  When true,
+    * tile_raster_order_increasing_* indicate the order that the rasterizer
+    * should render tiles, to meet the requirements of
+    * GL_MESA_tile_raster_order.
+    */
+   unsigned tile_raster_order_fixed:1;
+   unsigned tile_raster_order_increasing_x:1;
+   unsigned tile_raster_order_increasing_y:1;
 
    /**
     * When false, depth clipping is disabled and the depth value will be
@@ -426,8 +441,8 @@ struct pipe_surface
 struct pipe_sampler_view
 {
    struct pipe_reference reference;
-   enum pipe_format format:16;      /**< typed PIPE_FORMAT_x */
-   enum pipe_texture_target target:4; /**< PIPE_TEXTURE_x */
+   enum pipe_format format:15;      /**< typed PIPE_FORMAT_x */
+   enum pipe_texture_target target:5; /**< PIPE_TEXTURE_x */
    unsigned swizzle_r:3;         /**< PIPE_SWIZZLE_x for red component */
    unsigned swizzle_g:3;         /**< PIPE_SWIZZLE_x for green component */
    unsigned swizzle_b:3;         /**< PIPE_SWIZZLE_x for blue component */
@@ -886,6 +901,14 @@ struct pipe_memory_info
    unsigned avail_staging_memory; /**< free staging memory at the moment */
    unsigned device_memory_evicted; /**< size of memory evicted (monotonic counter) */
    unsigned nr_device_memory_evictions; /**< # of evictions (monotonic counter) */
+};
+
+/**
+ * Structure that contains information about external memory
+ */
+struct pipe_memory_object
+{
+   bool dedicated;
 };
 
 #ifdef __cplusplus

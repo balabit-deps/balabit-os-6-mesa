@@ -121,6 +121,23 @@ dri_st_framebuffer_flush_front(struct st_context_iface *stctx,
 }
 
 /**
+ * The state tracker framebuffer interface flush_swapbuffers callback
+ */
+static boolean
+dri_st_framebuffer_flush_swapbuffers(struct st_context_iface *stctx,
+                                     struct st_framebuffer_iface *stfbi)
+{
+   struct dri_context *ctx = (struct dri_context *)stctx->st_manager_private;
+   struct dri_drawable *drawable =
+      (struct dri_drawable *) stfbi->st_manager_private;
+
+   if (drawable->flush_swapbuffers)
+      drawable->flush_swapbuffers(ctx, drawable);
+
+   return TRUE;
+}
+
+/**
  * This is called when we need to set up GL rendering to a new X window.
  */
 boolean
@@ -144,6 +161,7 @@ dri_create_buffer(__DRIscreen * sPriv,
    drawable->base.visual = &drawable->stvis;
    drawable->base.flush_front = dri_st_framebuffer_flush_front;
    drawable->base.validate = dri_st_framebuffer_validate;
+   drawable->base.flush_swapbuffers = dri_st_framebuffer_flush_swapbuffers;
    drawable->base.st_manager_private = (void *) drawable;
 
    drawable->screen = screen;
@@ -242,6 +260,9 @@ dri_set_tex_buffer2(__DRIcontext *pDRICtx, GLint target,
       if (format == __DRI_TEXTURE_FORMAT_RGB)  {
          /* only need to cover the formats recognized by dri_fill_st_visual */
          switch (internal_format) {
+         case PIPE_FORMAT_B10G10R10A2_UNORM:
+            internal_format = PIPE_FORMAT_B10G10R10X2_UNORM;
+            break;
          case PIPE_FORMAT_BGRA8888_UNORM:
             internal_format = PIPE_FORMAT_BGRX8888_UNORM;
             break;
@@ -501,7 +522,8 @@ dri_flush(__DRIcontext *cPriv,
       dri_postprocessing(ctx, drawable, ST_ATTACHMENT_BACK_LEFT);
 
       if (ctx->hud) {
-         hud_draw(ctx->hud, drawable->textures[ST_ATTACHMENT_BACK_LEFT]);
+         hud_run(ctx->hud, ctx->st->cso_context,
+                 drawable->textures[ST_ATTACHMENT_BACK_LEFT]);
       }
 
       pipe->flush_resource(pipe, drawable->textures[ST_ATTACHMENT_BACK_LEFT]);

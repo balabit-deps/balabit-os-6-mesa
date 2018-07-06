@@ -316,6 +316,13 @@ struct ureg_src
 ureg_DECL_constant( struct ureg_program *,
                     unsigned index );
 
+void
+ureg_DECL_hw_atomic(struct ureg_program *ureg,
+                    unsigned first,
+                    unsigned last,
+                    unsigned buffer_id,
+                    unsigned array_id);
+
 struct ureg_dst
 ureg_DECL_temporary( struct ureg_program * );
 
@@ -905,7 +912,6 @@ static inline struct ureg_dst
 ureg_dst_indirect( struct ureg_dst reg, struct ureg_src addr )
 {
    assert(reg.File != TGSI_FILE_NULL);
-   assert(addr.File == TGSI_FILE_ADDRESS || addr.File == TGSI_FILE_TEMPORARY);
    reg.Indirect = 1;
    reg.IndirectFile = addr.File;
    reg.IndirectIndex = addr.Index;
@@ -917,7 +923,6 @@ static inline struct ureg_src
 ureg_src_indirect( struct ureg_src reg, struct ureg_src addr )
 {
    assert(reg.File != TGSI_FILE_NULL);
-   assert(addr.File == TGSI_FILE_ADDRESS || addr.File == TGSI_FILE_TEMPORARY);
    reg.Indirect = 1;
    reg.IndirectFile = addr.File;
    reg.IndirectIndex = addr.Index;
@@ -1024,10 +1029,6 @@ static inline struct ureg_dst
 ureg_dst( struct ureg_src src )
 {
    struct ureg_dst dst;
-
-   assert(!src.Indirect ||
-          (src.IndirectFile == TGSI_FILE_ADDRESS ||
-           src.IndirectFile == TGSI_FILE_TEMPORARY));
 
    dst.File      = src.File;
    dst.WriteMask = TGSI_WRITEMASK_XYZW;

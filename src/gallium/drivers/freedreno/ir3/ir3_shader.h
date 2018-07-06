@@ -36,12 +36,19 @@
 #include "ir3.h"
 #include "disasm.h"
 
+struct glsl_type;
+
 /* driver param indices: */
 enum ir3_driver_param {
 	/* compute shader driver params: */
 	IR3_DP_NUM_WORK_GROUPS_X = 0,
 	IR3_DP_NUM_WORK_GROUPS_Y = 1,
 	IR3_DP_NUM_WORK_GROUPS_Z = 2,
+	/* NOTE: gl_NumWorkGroups should be vec4 aligned because
+	 * glDispatchComputeIndirect() needs to load these from
+	 * the info->indirect buffer.  Keep that in mind when/if
+	 * adding any addition CS driver params.
+	 */
 	IR3_DP_CS_COUNT   = 4,   /* must be aligned to vec4 */
 
 	/* vertex shader driver params: */
@@ -52,6 +59,40 @@ enum ir3_driver_param {
 	/* .... */
 	IR3_DP_UCP7_W     = 35,
 	IR3_DP_VS_COUNT   = 36   /* must be aligned to vec4 */
+};
+
+/**
+ * For consts needed to pass internal values to shader which may or may not
+ * be required, rather than allocating worst-case const space, we scan the
+ * shader and allocate consts as-needed:
+ *
+ *   + SSBO sizes: only needed if shader has a get_buffer_size intrinsic
+ *     for a given SSBO
+ *
+ *   + Image dimensions: needed to calculate pixel offset, but only for
+ *     images that have a image_store intrinsic
+ */
+struct ir3_driver_const_layout {
+	struct {
+		uint32_t mask;  /* bitmask of SSBOs that have get_buffer_size */
+		uint32_t count; /* number of consts allocated */
+		/* one const allocated per SSBO which has get_buffer_size,
+		 * ssbo_sizes.off[ssbo_id] is offset from start of ssbo_sizes
+		 * consts:
+		 */
+		uint32_t off[PIPE_MAX_SHADER_BUFFERS];
+	} ssbo_size;
+
+	struct {
+		uint32_t mask;  /* bitmask of images that have image_store */
+		uint32_t count; /* number of consts allocated */
+		/* three const allocated per image which has image_store:
+		 *  + cpp         (bytes per pixel)
+		 *  + pitch       (y pitch)
+		 *  + array_pitch (z pitch)
+		 */
+		uint32_t off[PIPE_MAX_SHADER_IMAGES];
+	} image_dims;
 };
 
 /* Configuration key used to identify a shader variant.. different
@@ -171,6 +212,7 @@ struct ir3_shader_variant {
 
 	struct ir3_shader_key key;
 
+	struct ir3_driver_const_layout const_layout;
 	struct ir3_info info;
 	struct ir3 *ir;
 
@@ -189,6 +231,7 @@ struct ir3_shader_variant {
 	 * constants, etc.
 	 */
 	unsigned num_uniforms;
+
 	unsigned num_ubos;
 
 	/* About Linkage:
@@ -269,6 +312,9 @@ struct ir3_shader_variant {
 	struct {
 		/* user const start at zero */
 		unsigned ubo;
+		/* NOTE that a3xx might need a section for SSBO addresses too */
+		unsigned ssbo_sizes;
+		unsigned image_dims;
 		unsigned driver_param;
 		unsigned tfbo;
 		unsigned immediate;
@@ -338,6 +384,9 @@ void ir3_emit_fs_consts(const struct ir3_shader_variant *v, struct fd_ringbuffer
 		struct fd_context *ctx);
 void ir3_emit_cs_consts(const struct ir3_shader_variant *v, struct fd_ringbuffer *ring,
 		struct fd_context *ctx, const struct pipe_grid_info *info);
+
+int
+ir3_glsl_type_size(const struct glsl_type *type);
 
 static inline const char *
 ir3_shader_stage(struct ir3_shader *shader)

@@ -24,12 +24,6 @@
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
  */
-/*
- * Authors:
- *      Corbin Simpson <MostAwesomeDude@gmail.com>
- *      Joakim Sindholt <opensource@zhasha.com>
- *      Marek Olšák <maraeo@gmail.com>
- */
 
 #include "radeon_drm_bo.h"
 #include "radeon_drm_cs.h"
@@ -188,7 +182,7 @@ static bool do_winsys_init(struct radeon_drm_winsys *ws)
 #include "pci_ids/r600_pci_ids.h"
 #undef CHIPSET
 
-#define CHIPSET(pci_id, name, cfamily) case pci_id: ws->info.family = CHIP_##cfamily; ws->gen = DRV_SI; break;
+#define CHIPSET(pci_id, cfamily) case pci_id: ws->info.family = CHIP_##cfamily; ws->gen = DRV_SI; break;
 #include "pci_ids/radeonsi_pci_ids.h"
 #undef CHIPSET
 
@@ -375,12 +369,6 @@ static bool do_winsys_init(struct radeon_drm_winsys *ws)
                          &ws->info.max_shader_clock);
     ws->info.max_shader_clock /= 1000;
 
-    /* Default value. */
-    ws->info.enabled_rb_mask = u_bit_consecutive(0, ws->info.num_render_backends);
-    /* This fails on non-GCN or older kernels: */
-    radeon_get_drm_value(ws->fd, RADEON_INFO_SI_BACKEND_ENABLED_MASK, NULL,
-                         &ws->info.enabled_rb_mask);
-
     ws->num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
 
     /* Generation-specific queries. */
@@ -438,6 +426,16 @@ static bool do_winsys_init(struct radeon_drm_winsys *ws)
         if (radeon_get_drm_value(ws->fd, RADEON_INFO_BACKEND_MAP, NULL,
                                   &ws->info.r600_gb_backend_map))
             ws->info.r600_gb_backend_map_valid = true;
+
+        /* Default value. */
+        ws->info.enabled_rb_mask = u_bit_consecutive(0, ws->info.num_render_backends);
+        /*
+         * This fails (silently) on non-GCN or older kernels, overwriting the
+         * default enabled_rb_mask with the result of the last query.
+        */
+        if (ws->gen >= DRV_SI)
+            radeon_get_drm_value(ws->fd, RADEON_INFO_SI_BACKEND_ENABLED_MASK, NULL,
+                                 &ws->info.enabled_rb_mask);
 
         ws->info.has_virtual_memory = false;
         if (ws->info.drm_minor >= 13) {
@@ -527,6 +525,7 @@ static bool do_winsys_init(struct radeon_drm_winsys *ws)
 				     (ws->info.family == CHIP_HAWAII &&
 				      ws->accel_working2 < 3);
     ws->info.tcc_cache_line_size = 64; /* TC L2 line size on GCN */
+    ws->info.ib_start_alignment = 4096;
 
     ws->check_vm = strstr(debug_get_option("R600_DEBUG", ""), "check_vm") != NULL;
 
@@ -632,6 +631,7 @@ static uint64_t radeon_query_value(struct radeon_winsys *rws,
     case RADEON_NUM_VRAM_CPU_PAGE_FAULTS:
     case RADEON_VRAM_VIS_USAGE:
     case RADEON_GFX_BO_LIST_COUNTER:
+    case RADEON_GFX_IB_SIZE_COUNTER:
         return 0; /* unimplemented */
     case RADEON_VRAM_USAGE:
         radeon_get_drm_value(ws->fd, RADEON_INFO_VRAM_USAGE,
@@ -716,8 +716,13 @@ static bool radeon_winsys_unref(struct radeon_winsys *ws)
     mtx_lock(&fd_tab_mutex);
 
     destroy = pipe_reference(&rws->reference, NULL);
-    if (destroy && fd_tab)
+    if (destroy && fd_tab) {
         util_hash_table_remove(fd_tab, intptr_to_pointer(rws->fd));
+        if (util_hash_table_count(fd_tab) == 0) {
+           util_hash_table_destroy(fd_tab);
+           fd_tab = NULL;
+        }
+    }
 
     mtx_unlock(&fd_tab_mutex);
     return destroy;
@@ -736,7 +741,7 @@ static int handle_compare(void *key1, void *key2)
 }
 
 PUBLIC struct radeon_winsys *
-radeon_drm_winsys_create(int fd, unsigned flags,
+radeon_drm_winsys_create(int fd, const struct pipe_screen_config *config,
 			 radeon_screen_create_t screen_create)
 {
     struct radeon_drm_winsys *ws;
@@ -832,7 +837,7 @@ radeon_drm_winsys_create(int fd, unsigned flags,
      *
      * Alternatively, we could create the screen based on "ws->gen"
      * and link all drivers into one binary blob. */
-    ws->base.screen = screen_create(&ws->base, flags);
+    ws->base.screen = screen_create(&ws->base, config);
     if (!ws->base.screen) {
         radeon_winsys_destroy(&ws->base);
         mtx_unlock(&fd_tab_mutex);

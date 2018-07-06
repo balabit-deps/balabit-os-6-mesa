@@ -78,6 +78,11 @@ static void
 blorp_surface_reloc(struct blorp_batch *batch, uint32_t ss_offset,
                     struct blorp_address address, uint32_t delta);
 
+#if GEN_GEN >= 7
+static struct blorp_address
+blorp_get_surface_base_address(struct blorp_batch *batch);
+#endif
+
 static void
 blorp_emit_urb_config(struct blorp_batch *batch,
                       unsigned vs_entry_size, unsigned sf_entry_size);
@@ -269,7 +274,7 @@ blorp_emit_vertex_buffers(struct blorp_batch *batch,
    vb[0].VertexBufferIndex = 0;
    vb[0].BufferPitch = 3 * sizeof(float);
 #if GEN_GEN >= 6
-   vb[0].VertexBufferMOCS = batch->blorp->mocs.vb;
+   vb[0].VertexBufferMOCS = vb[0].BufferStartingAddress.mocs;
 #endif
 #if GEN_GEN >= 7
    vb[0].AddressModifyEnable = true;
@@ -290,7 +295,7 @@ blorp_emit_vertex_buffers(struct blorp_batch *batch,
    vb[1].VertexBufferIndex = 1;
    vb[1].BufferPitch = 0;
 #if GEN_GEN >= 6
-   vb[1].VertexBufferMOCS = batch->blorp->mocs.vb;
+   vb[1].VertexBufferMOCS = vb[1].BufferStartingAddress.mocs;
 #endif
 #if GEN_GEN >= 7
    vb[1].AddressModifyEnable = true;
@@ -380,7 +385,7 @@ blorp_emit_vertex_elements(struct blorp_batch *batch,
    ve[slot] = (struct GENX(VERTEX_ELEMENT_STATE)) {
       .VertexBufferIndex = 1,
       .Valid = true,
-      .SourceElementFormat = ISL_FORMAT_R32G32B32A32_FLOAT,
+      .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32G32B32A32_FLOAT,
       .SourceElementOffset = 0,
       .Component0Control = VFCOMP_STORE_SRC,
 
@@ -395,8 +400,8 @@ blorp_emit_vertex_elements(struct blorp_batch *batch,
 #else
       .Component1Control = VFCOMP_STORE_0,
 #endif
-      .Component2Control = VFCOMP_STORE_SRC,
-      .Component3Control = VFCOMP_STORE_SRC,
+      .Component2Control = VFCOMP_STORE_0,
+      .Component3Control = VFCOMP_STORE_0,
 #if GEN_GEN <= 5
       .DestinationElementOffset = slot * 4,
 #endif
@@ -412,7 +417,7 @@ blorp_emit_vertex_elements(struct blorp_batch *batch,
    ve[slot] = (struct GENX(VERTEX_ELEMENT_STATE)) {
       .VertexBufferIndex = 0,
       .Valid = true,
-      .SourceElementFormat = ISL_FORMAT_R32G32B32_FLOAT,
+      .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32G32B32_FLOAT,
       .SourceElementOffset = 0,
       .Component0Control = VFCOMP_STORE_SRC,
       .Component1Control = VFCOMP_STORE_SRC,
@@ -426,7 +431,7 @@ blorp_emit_vertex_elements(struct blorp_batch *batch,
    ve[slot] = (struct GENX(VERTEX_ELEMENT_STATE)) {
       .VertexBufferIndex = 0,
       .Valid = true,
-      .SourceElementFormat = ISL_FORMAT_R32G32B32_FLOAT,
+      .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32G32B32_FLOAT,
       .SourceElementOffset = 0,
       .Component0Control = VFCOMP_STORE_SRC,
       .Component1Control = VFCOMP_STORE_SRC,
@@ -442,7 +447,7 @@ blorp_emit_vertex_elements(struct blorp_batch *batch,
       ve[slot] = (struct GENX(VERTEX_ELEMENT_STATE)) {
          .VertexBufferIndex = 1,
          .Valid = true,
-         .SourceElementFormat = ISL_FORMAT_R32G32B32A32_FLOAT,
+         .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32G32B32A32_FLOAT,
          .SourceElementOffset = 16 + i * 4 * sizeof(float),
          .Component0Control = VFCOMP_STORE_SRC,
          .Component1Control = VFCOMP_STORE_SRC,
@@ -1202,6 +1207,42 @@ blorp_emit_pipeline(struct blorp_batch *batch,
 
 #endif /* GEN_GEN >= 6 */
 
+#if GEN_GEN >= 7 && GEN_GEN <= 10
+static void
+blorp_emit_memcpy(struct blorp_batch *batch,
+                  struct blorp_address dst,
+                  struct blorp_address src,
+                  uint32_t size)
+{
+   assert(size % 4 == 0);
+
+   for (unsigned dw = 0; dw < size; dw += 4) {
+#if GEN_GEN >= 8
+      blorp_emit(batch, GENX(MI_COPY_MEM_MEM), cp) {
+         cp.DestinationMemoryAddress = dst;
+         cp.SourceMemoryAddress = src;
+      }
+#else
+      /* IVB does not have a general purpose register for command streamer
+       * commands. Therefore, we use an alternate temporary register.
+       */
+#define BLORP_TEMP_REG 0x2440 /* GEN7_3DPRIM_BASE_VERTEX */
+      blorp_emit(batch, GENX(MI_LOAD_REGISTER_MEM), load) {
+         load.RegisterAddress = BLORP_TEMP_REG;
+         load.MemoryAddress = src;
+      }
+      blorp_emit(batch, GENX(MI_STORE_REGISTER_MEM), store) {
+         store.RegisterAddress = BLORP_TEMP_REG;
+         store.MemoryAddress = dst;
+      }
+#undef BLORP_TEMP_REG
+#endif
+      dst.offset += 4;
+      src.offset += 4;
+   }
+}
+#endif
+
 static void
 blorp_emit_surface_state(struct blorp_batch *batch,
                          const struct brw_blorp_surface_info *surface,
@@ -1235,13 +1276,11 @@ blorp_emit_surface_state(struct blorp_batch *batch,
          write_disable_mask |= ISL_CHANNEL_ALPHA_BIT;
    }
 
-   const uint32_t mocs =
-      is_render_target ? batch->blorp->mocs.rb : batch->blorp->mocs.tex;
-
    isl_surf_fill_state(batch->blorp->isl_dev, state,
                        .surf = &surf, .view = &surface->view,
                        .aux_surf = &surface->aux_surf, .aux_usage = aux_usage,
-                       .mocs = mocs, .clear_color = surface->clear_color,
+                       .mocs = surface->addr.mocs,
+                       .clear_color = surface->clear_color,
                        .write_disables = write_disable_mask);
 
    blorp_surface_reloc(batch, state_offset + isl_dev->ss.addr_offset,
@@ -1259,6 +1298,19 @@ blorp_emit_surface_state(struct blorp_batch *batch,
    }
 
    blorp_flush_range(batch, state, GENX(RENDER_SURFACE_STATE_length) * 4);
+
+   if (surface->clear_color_addr.buffer) {
+#if GEN_GEN > 10
+      unreachable("Implement indirect clear support on gen11+");
+#elif GEN_GEN >= 7 && GEN_GEN <= 10
+      struct blorp_address dst_addr = blorp_get_surface_base_address(batch);
+      dst_addr.offset += state_offset + isl_dev->ss.clear_value_offset;
+      blorp_emit_memcpy(batch, dst_addr, surface->clear_color_addr,
+                        isl_dev->ss.clear_value_size);
+#else
+      unreachable("Fast clears are only supported on gen7+");
+#endif
+   }
 }
 
 static void
@@ -1268,7 +1320,7 @@ blorp_emit_null_surface_state(struct blorp_batch *batch,
 {
    struct GENX(RENDER_SURFACE_STATE) ss = {
       .SurfaceType = SURFTYPE_NULL,
-      .SurfaceFormat = ISL_FORMAT_R8G8B8A8_UNORM,
+      .SurfaceFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R8G8B8A8_UNORM,
       .Width = surface->surf.logical_level0_px.width - 1,
       .Height = surface->surf.logical_level0_px.height - 1,
       .MIPCountLOD = surface->view.base_level,
@@ -1303,6 +1355,7 @@ blorp_emit_surface_states(struct blorp_batch *batch,
    uint32_t bind_offset, surface_offsets[2];
    void *surface_maps[2];
 
+   MAYBE_UNUSED bool has_indirect_clear_color = false;
    if (params->use_pre_baked_binding_table) {
       bind_offset = params->pre_baked_binding_table_offset;
    } else {
@@ -1316,6 +1369,8 @@ blorp_emit_surface_states(struct blorp_batch *batch,
                                   surface_maps[BLORP_RENDERBUFFER_BT_INDEX],
                                   surface_offsets[BLORP_RENDERBUFFER_BT_INDEX],
                                   params->color_write_disable, true);
+         if (params->dst.clear_color_addr.buffer != NULL)
+            has_indirect_clear_color = true;
       } else {
          assert(params->depth.enabled || params->stencil.enabled);
          const struct brw_blorp_surface_info *surface =
@@ -1329,8 +1384,27 @@ blorp_emit_surface_states(struct blorp_batch *batch,
                                   surface_maps[BLORP_TEXTURE_BT_INDEX],
                                   surface_offsets[BLORP_TEXTURE_BT_INDEX],
                                   NULL, false);
+         if (params->src.clear_color_addr.buffer != NULL)
+            has_indirect_clear_color = true;
       }
    }
+
+#if GEN_GEN >= 7 && GEN_GEN <= 10
+   if (has_indirect_clear_color) {
+      /* Updating a surface state object may require that the state cache be
+       * invalidated. From the SKL PRM, Shared Functions -> State -> State
+       * Caching:
+       *
+       *    Whenever the RENDER_SURFACE_STATE object in memory pointed to by
+       *    the Binding Table Pointer (BTP) and Binding Table Index (BTI) is
+       *    modified [...], the L1 state cache must be invalidated to ensure
+       *    the new surface or sampler state is fetched from system memory.
+       */
+      blorp_emit(batch, GENX(PIPE_CONTROL), pipe) {
+         pipe.StateCacheInvalidationEnable = true;
+      }
+   }
+#endif
 
 #if GEN_GEN >= 7
    blorp_emit(batch, GENX(3DSTATE_BINDING_TABLE_POINTERS_VS), bt);
@@ -1363,18 +1437,14 @@ blorp_emit_depth_stencil_config(struct blorp_batch *batch,
    if (dw == NULL)
       return;
 
-   struct isl_depth_stencil_hiz_emit_info info = {
-#if GEN_GEN >= 7
-      .mocs = 1, /* GEN7_MOCS_L3 */
-#else
-      .mocs = 0,
-#endif
-   };
+   struct isl_depth_stencil_hiz_emit_info info = { };
 
    if (params->depth.enabled) {
       info.view = &params->depth.view;
+      info.mocs = params->depth.addr.mocs;
    } else if (params->stencil.enabled) {
       info.view = &params->stencil.view;
+      info.mocs = params->stencil.addr.mocs;
    }
 
    if (params->depth.enabled) {
@@ -1453,6 +1523,17 @@ blorp_emit_gen8_hiz_op(struct blorp_batch *batch,
     */
    if (params->stencil.enabled)
       assert(params->hiz_op == BLORP_HIZ_OP_DEPTH_CLEAR);
+
+   /* From the BDW PRM Volume 2, 3DSTATE_WM_HZ_OP:
+    *
+    * 3DSTATE_MULTISAMPLE packet must be used prior to this packet to change
+    * the Number of Multisamples. This packet must not be used to change
+    * Number of Multisamples in a rendering sequence.
+    *
+    * Since HIZ may be the first thing in a batch buffer, play safe and always
+    * emit 3DSTATE_MULTISAMPLE.
+    */
+   blorp_emit_3dstate_multisample(batch, params);
 
    /* If we can't alter the depth stencil config and multiple layers are
     * involved, the HiZ op will fail. This is because the op requires that a

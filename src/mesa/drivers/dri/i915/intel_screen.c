@@ -39,7 +39,7 @@
 #include "swrast/s_renderbuffer.h"
 
 #include "utils.h"
-#include "xmlpool.h"
+#include "util/xmlpool.h"
 
 static const __DRIconfigOptionsExtension i915_config_options = {
    .base = { __DRI_CONFIG_OPTIONS, 1 },
@@ -67,7 +67,6 @@ DRI_CONF_BEGIN
 
    DRI_CONF_SECTION_END
    DRI_CONF_SECTION_QUALITY
-      DRI_CONF_FORCE_S3TC_ENABLE("false")
    DRI_CONF_SECTION_END
    DRI_CONF_SECTION_DEBUG
       DRI_CONF_NO_RAST("false")
@@ -957,13 +956,10 @@ i915CreateContext(int api,
 
 static GLboolean
 intelCreateContext(gl_api api,
-		   const struct gl_config * mesaVis,
+                   const struct gl_config * mesaVis,
                    __DRIcontext * driContextPriv,
-		   unsigned major_version,
-		   unsigned minor_version,
-		   uint32_t flags,
-                   bool notify_reset,
-		   unsigned *error,
+                   const struct __DriverContextConfig *ctx_config,
+                   unsigned *error,
                    void *sharedContextPrivate)
 {
    bool success = false;
@@ -971,24 +967,28 @@ intelCreateContext(gl_api api,
    __DRIscreen *sPriv = driContextPriv->driScreenPriv;
    struct intel_screen *intelScreen = sPriv->driverPrivate;
 
-   if (flags & ~(__DRI_CTX_FLAG_DEBUG | __DRI_CTX_FLAG_NO_ERROR)) {
+   if (ctx_config->flags & ~(__DRI_CTX_FLAG_DEBUG | __DRI_CTX_FLAG_NO_ERROR)) {
       *error = __DRI_CTX_ERROR_UNKNOWN_FLAG;
       return false;
    }
 
-   if (notify_reset) {
+   if (ctx_config->attribute_mask) {
       *error = __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
       return false;
    }
 
    if (IS_GEN3(intelScreen->deviceID)) {
       success = i915CreateContext(api, mesaVis, driContextPriv,
-                                  major_version, minor_version, flags,
+                                  ctx_config->major_version,
+                                  ctx_config->minor_version,
+                                  ctx_config->flags,
                                   error, sharedContextPrivate);
    } else {
       intelScreen->no_vbo = true;
       success = i830CreateContext(api, mesaVis, driContextPriv,
-                                  major_version, minor_version, flags,
+                                  ctx_config->major_version,
+                                  ctx_config->minor_version,
+                                  ctx_config->flags,
                                   error, sharedContextPrivate);
    }
 
@@ -1060,7 +1060,7 @@ intel_screen_make_configs(__DRIscreen *dri_screen)
 
    /* GLX_SWAP_COPY_OML is not supported due to page flipping. */
    static const GLenum back_buffer_modes[] = {
-       GLX_SWAP_UNDEFINED_OML, GLX_NONE,
+      __DRI_ATTRIB_SWAP_UNDEFINED, __DRI_ATTRIB_SWAP_NONE
    };
 
    static const uint8_t singlesample_samples[1] = {0};

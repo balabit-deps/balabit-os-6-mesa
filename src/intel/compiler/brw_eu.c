@@ -37,35 +37,6 @@
 
 #include "util/ralloc.h"
 
-/**
- * Converts a BRW_REGISTER_TYPE_* enum to a short string (F, UD, and so on).
- *
- * This is different than reg_encoding from brw_disasm.c in that it operates
- * on the abstract enum values, rather than the generation-specific encoding.
- */
-const char *
-brw_reg_type_letters(unsigned type)
-{
-   const char *names[] = {
-      [BRW_REGISTER_TYPE_UD] = "UD",
-      [BRW_REGISTER_TYPE_D]  = "D",
-      [BRW_REGISTER_TYPE_UW] = "UW",
-      [BRW_REGISTER_TYPE_W]  = "W",
-      [BRW_REGISTER_TYPE_F]  = "F",
-      [BRW_REGISTER_TYPE_UB] = "UB",
-      [BRW_REGISTER_TYPE_B]  = "B",
-      [BRW_REGISTER_TYPE_UV] = "UV",
-      [BRW_REGISTER_TYPE_V]  = "V",
-      [BRW_REGISTER_TYPE_VF] = "VF",
-      [BRW_REGISTER_TYPE_DF] = "DF",
-      [BRW_REGISTER_TYPE_HF] = "HF",
-      [BRW_REGISTER_TYPE_UQ] = "UQ",
-      [BRW_REGISTER_TYPE_Q]  = "Q",
-   };
-   assert(type <= BRW_REGISTER_TYPE_Q);
-   return names[type];
-}
-
 /* Returns a conditional modifier that negates the condition. */
 enum brw_conditional_mod
 brw_negate_cmod(uint32_t cmod)
@@ -325,6 +296,7 @@ brw_init_codegen(const struct gen_device_info *devinfo,
    memset(p, 0, sizeof(*p));
 
    p->devinfo = devinfo;
+   p->automatic_exec_sizes = true;
    /*
     * Set the initial instruction store array size to 1024, if found that
     * isn't enough, then it will double the store size at brw_next_insn()

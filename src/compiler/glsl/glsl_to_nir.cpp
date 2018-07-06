@@ -163,14 +163,21 @@ glsl_to_nir(const struct gl_shader_program *shader_prog,
     * two locations. For instance, if we have in the IR code a dvec3 attr0 in
     * location 0 and vec4 attr1 in location 1, in NIR attr0 will use
     * locations/slots 0 and 1, and attr1 will use location/slot 2 */
-   if (shader->stage == MESA_SHADER_VERTEX)
+   if (shader->info.stage == MESA_SHADER_VERTEX)
       nir_remap_attributes(shader);
 
    shader->info.name = ralloc_asprintf(shader, "GLSL%d", shader_prog->Name);
    if (shader_prog->Label)
       shader->info.label = ralloc_strdup(shader, shader_prog->Label);
+
+   /* Check for transform feedback varyings specified via the API */
    shader->info.has_transform_feedback_varyings =
       shader_prog->TransformFeedback.NumVarying > 0;
+
+   /* Check for transform feedback varyings specified in the Shader */
+   if (shader_prog->last_vert_prog)
+      shader->info.has_transform_feedback_varyings |=
+         shader_prog->last_vert_prog->sh.LinkedTransformFeedback->NumVarying > 0;
 
    return shader;
 }
@@ -212,7 +219,7 @@ constant_copy(ir_constant *ir, void *mem_ctx)
    if (ir == NULL)
       return NULL;
 
-   nir_constant *ret = ralloc(mem_ctx, nir_constant);
+   nir_constant *ret = rzalloc(mem_ctx, nir_constant);
 
    const unsigned rows = ir->type->vector_elements;
    const unsigned cols = ir->type->matrix_columns;
@@ -278,24 +285,13 @@ constant_copy(ir_constant *ir, void *mem_ctx)
       break;
 
    case GLSL_TYPE_STRUCT:
-      ret->elements = ralloc_array(mem_ctx, nir_constant *,
-                                   ir->type->length);
-      ret->num_elements = ir->type->length;
-
-      i = 0;
-      foreach_in_list(ir_constant, field, &ir->components) {
-         ret->elements[i] = constant_copy(field, mem_ctx);
-         i++;
-      }
-      break;
-
    case GLSL_TYPE_ARRAY:
       ret->elements = ralloc_array(mem_ctx, nir_constant *,
                                    ir->type->length);
       ret->num_elements = ir->type->length;
 
       for (i = 0; i < ir->type->length; i++)
-         ret->elements[i] = constant_copy(ir->array_elements[i], mem_ctx);
+         ret->elements[i] = constant_copy(ir->const_elements[i], mem_ctx);
       break;
 
    default:
@@ -315,16 +311,18 @@ nir_visitor::visit(ir_variable *ir)
    if (ir->data.mode == ir_var_shader_shared)
       return;
 
-   nir_variable *var = ralloc(shader, nir_variable);
+   nir_variable *var = rzalloc(shader, nir_variable);
    var->type = ir->type;
    var->name = ralloc_strdup(var, ir->name);
 
+   var->data.always_active_io = ir->data.always_active_io;
    var->data.read_only = ir->data.read_only;
    var->data.centroid = ir->data.centroid;
    var->data.sample = ir->data.sample;
    var->data.patch = ir->data.patch;
    var->data.invariant = ir->data.invariant;
    var->data.location = ir->data.location;
+   var->data.stream = ir->data.stream;
    var->data.compact = false;
 
    switch(ir->data.mode) {
@@ -344,12 +342,12 @@ nir_visitor::visit(ir_variable *ir)
       break;
 
    case ir_var_shader_in:
-      if (shader->stage == MESA_SHADER_FRAGMENT &&
+      if (shader->info.stage == MESA_SHADER_FRAGMENT &&
           ir->data.location == VARYING_SLOT_FACE) {
          /* For whatever reason, GLSL IR makes gl_FrontFacing an input */
          var->data.location = SYSTEM_VALUE_FRONT_FACE;
          var->data.mode = nir_var_system_value;
-      } else if (shader->stage == MESA_SHADER_GEOMETRY &&
+      } else if (shader->info.stage == MESA_SHADER_GEOMETRY &&
                  ir->data.location == VARYING_SLOT_PRIMITIVE_ID) {
          /* For whatever reason, GLSL IR makes gl_PrimitiveIDIn an input */
          var->data.location = SYSTEM_VALUE_PRIMITIVE_ID;
@@ -357,7 +355,7 @@ nir_visitor::visit(ir_variable *ir)
       } else {
          var->data.mode = nir_var_shader_in;
 
-         if (shader->stage == MESA_SHADER_TESS_EVAL &&
+         if (shader->info.stage == MESA_SHADER_TESS_EVAL &&
              (ir->data.location == VARYING_SLOT_TESS_LEVEL_INNER ||
               ir->data.location == VARYING_SLOT_TESS_LEVEL_OUTER)) {
             var->data.compact = ir->type->without_array()->is_scalar();
@@ -375,7 +373,7 @@ nir_visitor::visit(ir_variable *ir)
 
    case ir_var_shader_out:
       var->data.mode = nir_var_shader_out;
-      if (shader->stage == MESA_SHADER_TESS_CTRL &&
+      if (shader->info.stage == MESA_SHADER_TESS_CTRL &&
           (ir->data.location == VARYING_SLOT_TESS_LEVEL_INNER ||
            ir->data.location == VARYING_SLOT_TESS_LEVEL_OUTER)) {
          var->data.compact = ir->type->without_array()->is_scalar();
@@ -1168,6 +1166,7 @@ nir_visitor::visit(ir_call *ir)
       case nir_intrinsic_ballot: {
          nir_ssa_dest_init(&instr->instr, &instr->dest,
                            ir->return_deref->type->vector_elements, 64, NULL);
+         instr->num_components = ir->return_deref->type->vector_elements;
 
          ir_rvalue *value = (ir_rvalue *) ir->actual_parameters.get_head();
          instr->src[0] = nir_src_for_ssa(evaluate_rvalue(value));
@@ -1379,13 +1378,15 @@ nir_visitor::evaluate_rvalue(ir_rvalue* ir)
 static bool
 type_is_float(glsl_base_type type)
 {
-   return type == GLSL_TYPE_FLOAT || type == GLSL_TYPE_DOUBLE;
+   return type == GLSL_TYPE_FLOAT || type == GLSL_TYPE_DOUBLE ||
+      type == GLSL_TYPE_FLOAT16;
 }
 
 static bool
 type_is_signed(glsl_base_type type)
 {
-   return type == GLSL_TYPE_INT || type == GLSL_TYPE_INT64;
+   return type == GLSL_TYPE_INT || type == GLSL_TYPE_INT64 ||
+      type == GLSL_TYPE_INT16;
 }
 
 void
@@ -1485,11 +1486,11 @@ nir_visitor::visit(ir_expression *ir)
    }
 
    nir_ssa_def *srcs[4];
-   for (unsigned i = 0; i < ir->get_num_operands(); i++)
+   for (unsigned i = 0; i < ir->num_operands; i++)
       srcs[i] = evaluate_rvalue(ir->operands[i]);
 
    glsl_base_type types[4];
-   for (unsigned i = 0; i < ir->get_num_operands(); i++)
+   for (unsigned i = 0; i < ir->num_operands; i++)
       if (supports_ints)
          types[i] = ir->operands[i]->type->base_type;
       else
@@ -1574,7 +1575,8 @@ nir_visitor::visit(ir_expression *ir)
    case ir_unop_u642i64: {
       nir_alu_type src_type = nir_get_nir_type_for_glsl_base_type(types[0]);
       nir_alu_type dst_type = nir_get_nir_type_for_glsl_base_type(out_type);
-      result = nir_build_alu(&b, nir_type_conversion_op(src_type, dst_type),
+      result = nir_build_alu(&b, nir_type_conversion_op(src_type, dst_type,
+                                 nir_rounding_mode_undef),
                                  srcs[0], NULL, NULL, NULL);
       /* b2i and b2f don't have fixed bit-size versions so the builder will
        * just assume 32 and we have to fix it up here.
@@ -1638,11 +1640,15 @@ nir_visitor::visit(ir_expression *ir)
    case ir_unop_unpack_half_2x16:
       result = nir_unpack_half_2x16(&b, srcs[0]);
       break;
+   case ir_unop_pack_sampler_2x32:
+   case ir_unop_pack_image_2x32:
    case ir_unop_pack_double_2x32:
    case ir_unop_pack_int_2x32:
    case ir_unop_pack_uint_2x32:
       result = nir_pack_64_2x32(&b, srcs[0]);
       break;
+   case ir_unop_unpack_sampler_2x32:
+   case ir_unop_unpack_image_2x32:
    case ir_unop_unpack_double_2x32:
    case ir_unop_unpack_int_2x32:
    case ir_unop_unpack_uint_2x32:
@@ -1800,30 +1806,6 @@ nir_visitor::visit(ir_expression *ir)
             result = nir_ult(&b, srcs[0], srcs[1]);
       } else {
          result = nir_slt(&b, srcs[0], srcs[1]);
-      }
-      break;
-   case ir_binop_greater:
-      if (supports_ints) {
-         if (type_is_float(types[0]))
-            result = nir_flt(&b, srcs[1], srcs[0]);
-         else if (type_is_signed(types[0]))
-            result = nir_ilt(&b, srcs[1], srcs[0]);
-         else
-            result = nir_ult(&b, srcs[1], srcs[0]);
-      } else {
-         result = nir_slt(&b, srcs[1], srcs[0]);
-      }
-      break;
-   case ir_binop_lequal:
-      if (supports_ints) {
-         if (type_is_float(types[0]))
-            result = nir_fge(&b, srcs[1], srcs[0]);
-         else if (type_is_signed(types[0]))
-            result = nir_ige(&b, srcs[1], srcs[0]);
-         else
-            result = nir_uge(&b, srcs[1], srcs[0]);
-      } else {
-         result = nir_slt(&b, srcs[1], srcs[0]);
       }
       break;
    case ir_binop_gequal:
@@ -2196,7 +2178,7 @@ nir_visitor::visit(ir_dereference_record *ir)
 {
    ir->record->accept(this);
 
-   int field_index = this->deref_tail->type->field_index(ir->field);
+   int field_index = ir->field_idx;
    assert(field_index >= 0);
 
    nir_deref_struct *deref = nir_deref_struct_create(this->deref_tail, field_index);

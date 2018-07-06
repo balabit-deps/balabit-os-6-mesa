@@ -49,10 +49,6 @@
 /* NOTE: this constant may get moved into a svga3d*.h header file */
 #define SVGA3D_DX_MAX_RESOURCE_SIZE (128 * 1024 * 1024)
 
-#ifndef MESA_GIT_SHA1
-#define MESA_GIT_SHA1 "(unknown git revision)"
-#endif
-
 #ifdef DEBUG
 int SVGA_DEBUG = 0;
 
@@ -111,7 +107,8 @@ svga_get_name( struct pipe_screen *pscreen )
 
 /** Helper for querying float-valued device cap */
 static float
-get_float_cap(struct svga_winsys_screen *sws, unsigned cap, float defaultVal)
+get_float_cap(struct svga_winsys_screen *sws, SVGA3dDevCapIndex cap,
+              float defaultVal)
 {
    SVGA3dDevCapResult result;
    if (sws->get_cap(sws, cap, &result))
@@ -123,7 +120,8 @@ get_float_cap(struct svga_winsys_screen *sws, unsigned cap, float defaultVal)
 
 /** Helper for querying uint-valued device cap */
 static unsigned
-get_uint_cap(struct svga_winsys_screen *sws, unsigned cap, unsigned defaultVal)
+get_uint_cap(struct svga_winsys_screen *sws, SVGA3dDevCapIndex cap,
+             unsigned defaultVal)
 {
    SVGA3dDevCapResult result;
    if (sws->get_cap(sws, cap, &result))
@@ -135,7 +133,8 @@ get_uint_cap(struct svga_winsys_screen *sws, unsigned cap, unsigned defaultVal)
 
 /** Helper for querying boolean-valued device cap */
 static boolean
-get_bool_cap(struct svga_winsys_screen *sws, unsigned cap, boolean defaultVal)
+get_bool_cap(struct svga_winsys_screen *sws, SVGA3dDevCapIndex cap,
+             boolean defaultVal)
 {
    SVGA3dDevCapResult result;
    if (sws->get_cap(sws, cap, &result))
@@ -192,8 +191,6 @@ svga_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
    case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
       return 1;
-   case PIPE_CAP_TWO_SIDED_STENCIL:
-      return 1;
    case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
       /*
        * "In virtually every OpenGL implementation and hardware,
@@ -215,16 +212,12 @@ svga_get_param(struct pipe_screen *screen, enum pipe_cap param)
       return 0;
    case PIPE_CAP_TEXTURE_BUFFER_OBJECTS:
       return sws->have_vgpu10;
-   case PIPE_CAP_TEXTURE_SHADOW_MAP:
-      return 1;
    case PIPE_CAP_TEXTURE_SWIZZLE:
       return 1;
    case PIPE_CAP_TEXTURE_BORDER_COLOR_QUIRK:
       return 0;
    case PIPE_CAP_USER_VERTEX_BUFFERS:
       return 0;
-   case PIPE_CAP_USER_CONSTANT_BUFFERS:
-      return 1;
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
       return 256;
 
@@ -340,8 +333,10 @@ svga_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_NATIVE_FENCE_FD:
       return sws->have_fence_fd;
 
-   /* Unsupported features */
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
+      return 1;
+
+   /* Unsupported features */
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
    case PIPE_CAP_SHADER_STENCIL_EXPORT:
    case PIPE_CAP_SEAMLESS_CUBE_MAP_PER_TEXTURE:
@@ -450,6 +445,15 @@ svga_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_ALLOW_MAPPED_BUFFERS_DURING_EXECUTION:
    case PIPE_CAP_POST_DEPTH_COVERAGE:
    case PIPE_CAP_BINDLESS_TEXTURE:
+   case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+   case PIPE_CAP_QUERY_SO_OVERFLOW:
+   case PIPE_CAP_MEMOBJ:
+   case PIPE_CAP_LOAD_CONSTBUF:
+   case PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS:
+   case PIPE_CAP_TILE_RASTER_ORDER:
+   case PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES:
+   case PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET:
+   case PIPE_CAP_CONTEXT_PRIORITY_MASK:
       return 0;
    }
 
@@ -496,12 +500,12 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          val = get_uint_cap(sws, SVGA3D_DEVCAP_MAX_FRAGMENT_SHADER_TEMPS, 32);
          return MIN2(val, SVGA3D_TEMPREG_MAX);
       case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
-	 /* 
-	  * Although PS 3.0 has some addressing abilities it can only represent
-	  * loops that can be statically determined and unrolled. Given we can
-	  * only handle a subset of the cases that the state tracker already
-	  * does it is better to defer loop unrolling to the state tracker.
-	  */
+         /*
+          * Although PS 3.0 has some addressing abilities it can only represent
+          * loops that can be statically determined and unrolled. Given we can
+          * only handle a subset of the cases that the state tracker already
+          * does it is better to defer loop unrolling to the state tracker.
+          */
          return 0;
       case PIPE_SHADER_CAP_TGSI_CONT_SUPPORTED:
          return 0;
@@ -513,7 +517,10 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_SUBROUTINES:
          return 0;
+      case PIPE_SHADER_CAP_INT64_ATOMICS:
       case PIPE_SHADER_CAP_INTEGERS:
+         return 0;
+      case PIPE_SHADER_CAP_FP16:
          return 0;
       case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
       case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
@@ -524,12 +531,15 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+      case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
       case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
       case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+      case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+      case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
          return 0;
       case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
          return 32;
@@ -574,7 +584,10 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 1;
       case PIPE_SHADER_CAP_SUBROUTINES:
          return 0;
+      case PIPE_SHADER_CAP_INT64_ATOMICS:
       case PIPE_SHADER_CAP_INTEGERS:
+         return 0;
+      case PIPE_SHADER_CAP_FP16:
          return 0;
       case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
       case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
@@ -585,12 +598,15 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+      case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
       case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
       case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+      case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+      case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
          return 0;
       case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
          return 32;
@@ -671,21 +687,27 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
    case PIPE_SHADER_CAP_SUBROUTINES:
    case PIPE_SHADER_CAP_INTEGERS:
       return TRUE;
+   case PIPE_SHADER_CAP_FP16:
+      return FALSE;
    case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
    case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
       return SVGA3D_DX_MAX_SAMPLERS;
    case PIPE_SHADER_CAP_PREFERRED_IR:
       return PIPE_SHADER_IR_TGSI;
    case PIPE_SHADER_CAP_SUPPORTED_IRS:
-         return 0;
+      return 0;
    case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+   case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
    case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
    case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
    case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+   case PIPE_SHADER_CAP_INT64_ATOMICS:
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
       return 0;
    case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
       return 32;
@@ -709,122 +731,6 @@ svga_get_shader_param(struct pipe_screen *screen, enum pipe_shader_type shader,
    else {
       return vgpu9_get_shader_param(screen, shader, param);
    }
-}
-
-
-/**
- * Implement pipe_screen::is_format_supported().
- * \param bindings  bitmask of PIPE_BIND_x flags
- */
-static boolean
-svga_is_format_supported( struct pipe_screen *screen,
-                          enum pipe_format format,
-                          enum pipe_texture_target target,
-                          unsigned sample_count,
-                          unsigned bindings)
-{
-   struct svga_screen *ss = svga_screen(screen);
-   SVGA3dSurfaceFormat svga_format;
-   SVGA3dSurfaceFormatCaps caps;
-   SVGA3dSurfaceFormatCaps mask;
-
-   assert(bindings);
-
-   if (sample_count > 1) {
-      /* In ms_samples, if bit N is set it means that we support
-       * multisample with N+1 samples per pixel.
-       */
-      if ((ss->ms_samples & (1 << (sample_count - 1))) == 0) {
-         return FALSE;
-      }
-   }
-
-   svga_format = svga_translate_format(ss, format, bindings);
-   if (svga_format == SVGA3D_FORMAT_INVALID) {
-      return FALSE;
-   }
-
-   /* we don't support sRGB rendering into display targets */
-   if (util_format_is_srgb(format) && (bindings & PIPE_BIND_DISPLAY_TARGET)) {
-      return FALSE;
-   }
-
-   /*
-    * For VGPU10 vertex formats, skip querying host capabilities
-    */
-
-   if (ss->sws->have_vgpu10 && (bindings & PIPE_BIND_VERTEX_BUFFER)) {
-      SVGA3dSurfaceFormat svga_format;
-      unsigned flags;
-      svga_translate_vertex_format_vgpu10(format, &svga_format, &flags);
-      return svga_format != SVGA3D_FORMAT_INVALID;
-   }
-
-   /*
-    * Override host capabilities, so that we end up with the same
-    * visuals for all virtual hardware implementations.
-    */
-
-   if (bindings & PIPE_BIND_DISPLAY_TARGET) {
-      switch (svga_format) {
-      case SVGA3D_A8R8G8B8:
-      case SVGA3D_X8R8G8B8:
-      case SVGA3D_R5G6B5:
-         break;
-
-      /* VGPU10 formats */
-      case SVGA3D_B8G8R8A8_UNORM:
-      case SVGA3D_B8G8R8X8_UNORM:
-      case SVGA3D_B5G6R5_UNORM:
-         break;
-
-      /* Often unsupported/problematic. This means we end up with the same
-       * visuals for all virtual hardware implementations.
-       */
-      case SVGA3D_A4R4G4B4:
-      case SVGA3D_A1R5G5B5:
-         return FALSE;
-         
-      default:
-         return FALSE;
-      }
-   }
-   
-   /*
-    * Query the host capabilities.
-    */
-
-   svga_get_format_cap(ss, svga_format, &caps);
-
-   if (bindings & PIPE_BIND_RENDER_TARGET) {
-      /* Check that the color surface is blendable, unless it's an
-       * integer format.
-       */
-      if (!svga_format_is_integer(svga_format) &&
-          (caps.value & SVGA3DFORMAT_OP_NOALPHABLEND)) {
-         return FALSE;
-      }
-   }
-
-   mask.value = 0;
-   if (bindings & PIPE_BIND_RENDER_TARGET) {
-      mask.value |= SVGA3DFORMAT_OP_OFFSCREEN_RENDERTARGET;
-   }
-   if (bindings & PIPE_BIND_DEPTH_STENCIL) {
-      mask.value |= SVGA3DFORMAT_OP_ZSTENCIL;
-   }
-   if (bindings & PIPE_BIND_SAMPLER_VIEW) {
-      mask.value |= SVGA3DFORMAT_OP_TEXTURE;
-   }
-
-   if (target == PIPE_TEXTURE_CUBE) {
-      mask.value |= SVGA3DFORMAT_OP_CUBETEXTURE;
-   }
-   else if (target == PIPE_TEXTURE_3D) {
-      mask.value |= SVGA3DFORMAT_OP_VOLUMETEXTURE;
-   }
-
-   return (caps.value & mask.value) == mask.value;
 }
 
 
@@ -933,6 +839,8 @@ svga_get_driver_query_info(struct pipe_screen *screen,
             PIPE_DRIVER_QUERY_TYPE_UINT64),
       QUERY("num-failed-allocations", SVGA_QUERY_NUM_FAILED_ALLOCATIONS,
             PIPE_DRIVER_QUERY_TYPE_UINT64),
+      QUERY("num-commands-per-draw", SVGA_QUERY_NUM_COMMANDS_PER_DRAW,
+            PIPE_DRIVER_QUERY_TYPE_FLOAT),
    };
 #undef QUERY
 
@@ -959,7 +867,11 @@ init_logging(struct pipe_screen *screen)
    svga_host_log(host_log);
 
    util_snprintf(host_log, sizeof(host_log) - strlen(log_prefix),
-                 "%s%s (%s)", log_prefix, PACKAGE_VERSION, MESA_GIT_SHA1);
+                 "%s%s"
+#ifdef MESA_GIT_SHA1
+                 " (" MESA_GIT_SHA1 ")"
+#endif
+                 , log_prefix, PACKAGE_VERSION);
    svga_host_log(host_log);
 
    /* If the SVGA_EXTRA_LOGGING env var is set, log the process's command
@@ -980,14 +892,14 @@ static void
 svga_destroy_screen( struct pipe_screen *screen )
 {
    struct svga_screen *svgascreen = svga_screen(screen);
-   
+
    svga_screen_cache_cleanup(svgascreen);
 
    mtx_destroy(&svgascreen->swc_mutex);
    mtx_destroy(&svgascreen->tex_mutex);
 
    svgascreen->sws->destroy(svgascreen->sws);
-   
+
    FREE(svgascreen);
 }
 
@@ -1196,11 +1108,13 @@ error1:
    return NULL;
 }
 
+
 struct svga_winsys_screen *
 svga_winsys_screen(struct pipe_screen *screen)
 {
    return svga_screen(screen)->sws;
 }
+
 
 #ifdef DEBUG
 struct svga_screen *

@@ -339,25 +339,58 @@ BuilderSWR::swr_gs_llvm_fetch_input(const struct lp_build_tgsi_gs_iface *gs_ifac
                            LLVMValueRef swizzle_index)
 {
     swr_gs_llvm_iface *iface = (swr_gs_llvm_iface*)gs_iface;
+    Value *vert_index = unwrap(vertex_index);
+    Value *attr_index = unwrap(attrib_index);
 
     IRB()->SetInsertPoint(unwrap(LLVMGetInsertBlock(gallivm->builder)));
 
-    assert(is_vindex_indirect == false && is_aindex_indirect == false);
+    if (is_vindex_indirect || is_aindex_indirect) {
+       int i;
+       Value *res = unwrap(bld_base->base.zero);
+       struct lp_type type = bld_base->base.type;
 
-    Value *attrib =
-       LOAD(GEP(iface->pVtxAttribMap, {C(0), unwrap(attrib_index)}));
+       for (i = 0; i < type.length; i++) {
+          Value *vert_chan_index = vert_index;
+          Value *attr_chan_index = attr_index;
 
-    Value *pInput =
-       LOAD(GEP(iface->pGsCtx,
-                {C(0),
-                 C(SWR_GS_CONTEXT_vert),
-                 unwrap(vertex_index),
-                 C(0),
-                 attrib,
-                 unwrap(swizzle_index)}));
+          if (is_vindex_indirect) {
+             vert_chan_index = VEXTRACT(vert_index, C(i));
+          }
+          if (is_aindex_indirect) {
+             attr_chan_index = VEXTRACT(attr_index, C(i));
+          }
 
-    return wrap(pInput);
+          Value *attrib =
+             LOAD(GEP(iface->pVtxAttribMap, {C(0), attr_chan_index}));
+
+          Value *pVertex = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pVerts});
+          Value *pInputVertStride = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_inputVertStride});
+
+          Value *pVector = ADD(MUL(vert_chan_index, pInputVertStride), attrib);
+          Value *pInput = LOAD(GEP(pVertex, {pVector, unwrap(swizzle_index)}));
+
+          Value *value = VEXTRACT(pInput, C(i));
+          res = VINSERT(res, value, C(i));
+       }
+
+       return wrap(res);
+    } else {
+       Value *attrib = LOAD(GEP(iface->pVtxAttribMap, {C(0), attr_index}));
+
+       Value *pVertex = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pVerts});
+       Value *pInputVertStride = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_inputVertStride});
+
+       Value *pVector = ADD(MUL(vert_index, pInputVertStride), attrib);
+
+       Value *pInput = LOAD(GEP(pVertex, {pVector, unwrap(swizzle_index)}));
+
+       return wrap(pInput);
+    }
 }
+
+// GS output stream layout
+#define VERTEX_COUNT_SIZE 32
+#define CONTROL_HEADER_SIZE (8*32)
 
 void
 BuilderSWR::swr_gs_llvm_emit_vertex(const struct lp_build_tgsi_gs_iface *gs_base,
@@ -366,41 +399,19 @@ BuilderSWR::swr_gs_llvm_emit_vertex(const struct lp_build_tgsi_gs_iface *gs_base
                            LLVMValueRef emitted_vertices_vec)
 {
     swr_gs_llvm_iface *iface = (swr_gs_llvm_iface*)gs_base;
-    SWR_GS_STATE *pGS = iface->pGsState;
 
     IRB()->SetInsertPoint(unwrap(LLVMGetInsertBlock(gallivm->builder)));
 
-#if USE_SIMD16_FRONTEND
-    const uint32_t simdVertexStride = sizeof(simdvertex) * 2;
-    const uint32_t numSimdBatches = (pGS->maxNumVerts + (mVWidth * 2) - 1) / (mVWidth * 2);
-#else
-    const uint32_t simdVertexStride = sizeof(simdvertex);
-    const uint32_t numSimdBatches = (pGS->maxNumVerts + mVWidth - 1) / mVWidth;
-#endif
-    const uint32_t inputPrimStride = numSimdBatches * simdVertexStride;
+    const uint32_t headerSize = VERTEX_COUNT_SIZE + CONTROL_HEADER_SIZE;
+    const uint32_t attribSize = 4 * sizeof(float);
+    const uint32_t vertSize = attribSize * SWR_VTX_NUM_SLOTS;
+    Value *pVertexOffset = MUL(unwrap(emitted_vertices_vec), VIMMED1(vertSize));
 
-    Value *pStream = LOAD(iface->pGsCtx, { 0, SWR_GS_CONTEXT_pStream });
-    Value *vMask = LOAD(iface->pGsCtx, { 0, SWR_GS_CONTEXT_mask });
-    Value *vMask1 = TRUNC(vMask, VectorType::get(mInt1Ty, 8));
+    Value *vMask = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_mask});
+    Value *vMask1 = TRUNC(vMask, VectorType::get(mInt1Ty, mVWidth));
 
-    Value *vOffsets = C({
-          inputPrimStride * 0,
-          inputPrimStride * 1,
-          inputPrimStride * 2,
-          inputPrimStride * 3,
-          inputPrimStride * 4,
-          inputPrimStride * 5,
-          inputPrimStride * 6,
-          inputPrimStride * 7 } );
-
-#if USE_SIMD16_FRONTEND
-    const uint32_t simdShift = log2(mVWidth * 2);
-    Value *vSimdSlot = AND(unwrap(emitted_vertices_vec), (mVWidth * 2) - 1);
-#else
-    const uint32_t simdShift = log2(mVWidth);
-    Value *vSimdSlot = AND(unwrap(emitted_vertices_vec), mVWidth - 1);
-#endif
-    Value *vVertexSlot = ASHR(unwrap(emitted_vertices_vec), simdShift);
+    Value *pStack = STACKSAVE();
+    Value *pTmpPtr = ALLOCA(mFP32Ty, C(4)); // used for dummy write for lane masking
 
     for (uint32_t attrib = 0; attrib < iface->num_outputs; ++attrib) {
        uint32_t attribSlot = attrib;
@@ -420,46 +431,36 @@ BuilderSWR::swr_gs_llvm_emit_vertex(const struct lp_build_tgsi_gs_iface *gs_base
           }
        }
 
-#if USE_SIMD16_FRONTEND
-       Value *vOffsetsAttrib =
-          ADD(vOffsets, MUL(vVertexSlot, VIMMED1((uint32_t)sizeof(simdvertex) * 2)));
-       vOffsetsAttrib =
-          ADD(vOffsetsAttrib, VIMMED1((uint32_t)(attribSlot*sizeof(simdvector) * 2)));
-#else
-       Value *vOffsetsAttrib =
-          ADD(vOffsets, MUL(vVertexSlot, VIMMED1((uint32_t)sizeof(simdvertex))));
-       vOffsetsAttrib =
-          ADD(vOffsetsAttrib, VIMMED1((uint32_t)(attribSlot*sizeof(simdvector))));
-#endif
-       vOffsetsAttrib =
-          ADD(vOffsetsAttrib, MUL(vSimdSlot, VIMMED1((uint32_t)sizeof(float))));
+       Value *pOutputOffset = ADD(pVertexOffset, VIMMED1(headerSize + attribSize * attribSlot)); // + sgvChannel ?
 
-       for (uint32_t channel = 0; channel < 4; ++channel) {
-          Value *vPtrs = GEP(pStream, vOffsetsAttrib);
-          Value *vData;
+       for (uint32_t lane = 0; lane < mVWidth; ++lane) {
+          Value *pLaneOffset = VEXTRACT(pOutputOffset, C(lane));
+          Value *pStream = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pStreams, lane});
+          Value *pStreamOffset = GEP(pStream, pLaneOffset);
+          pStreamOffset = BITCAST(pStreamOffset, mFP32PtrTy);
 
-          if (attribSlot == VERTEX_SGV_SLOT)
-             vData = LOAD(unwrap(outputs[attrib][0]));
-          else
-             vData = LOAD(unwrap(outputs[attrib][channel]));
+          Value *pLaneMask = VEXTRACT(vMask1, C(lane));
+          pStreamOffset = SELECT(pLaneMask, pStreamOffset, pTmpPtr);
 
-          if (attribSlot != VERTEX_SGV_SLOT ||
-              sgvChannel == channel) {
-             vPtrs = BITCAST(vPtrs,
-                             VectorType::get(PointerType::get(mFP32Ty, 0), 8));
+          for (uint32_t channel = 0; channel < 4; ++channel) {
+             Value *vData;
 
-             MASKED_SCATTER(vData, vPtrs, 32, vMask1);
+             if (attribSlot == VERTEX_SGV_SLOT)
+                vData = LOAD(unwrap(outputs[attrib][0]));
+             else
+                vData = LOAD(unwrap(outputs[attrib][channel]));
+
+             if (attribSlot != VERTEX_SGV_SLOT ||
+                 sgvChannel == channel) {
+                vData = VEXTRACT(vData, C(lane));
+                STORE(vData, pStreamOffset);
+             }
+             pStreamOffset = GEP(pStreamOffset, C(1));
           }
-
-#if USE_SIMD16_FRONTEND
-          vOffsetsAttrib =
-             ADD(vOffsetsAttrib, VIMMED1((uint32_t)sizeof(simdscalar) * 2));
-#else
-          vOffsetsAttrib =
-             ADD(vOffsetsAttrib, VIMMED1((uint32_t)sizeof(simdscalar)));
-#endif
        }
     }
+
+    STACKRESTORE(pStack);
 }
 
 void
@@ -469,12 +470,9 @@ BuilderSWR::swr_gs_llvm_end_primitive(const struct lp_build_tgsi_gs_iface *gs_ba
                              LLVMValueRef emitted_prims_vec)
 {
     swr_gs_llvm_iface *iface = (swr_gs_llvm_iface*)gs_base;
-    SWR_GS_STATE *pGS = iface->pGsState;
 
     IRB()->SetInsertPoint(unwrap(LLVMGetInsertBlock(gallivm->builder)));
 
-    Value *pCutBuffer =
-       LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pCutOrStreamIdBuffer});
     Value *vMask = LOAD(iface->pGsCtx, { 0, SWR_GS_CONTEXT_mask });
     Value *vMask1 = TRUNC(vMask, VectorType::get(mInt1Ty, 8));
 
@@ -496,31 +494,29 @@ BuilderSWR::swr_gs_llvm_end_primitive(const struct lp_build_tgsi_gs_iface *gs_ba
     mask = AND(mask, cmpMask);
     vMask1 = TRUNC(mask, VectorType::get(mInt1Ty, 8));
 
-    const uint32_t cutPrimStride =
-       (pGS->maxNumVerts + JM()->mVWidth - 1) / JM()->mVWidth;
-    Value *vOffsets = C({
-          (uint32_t)(cutPrimStride * 0),
-          (uint32_t)(cutPrimStride * 1),
-          (uint32_t)(cutPrimStride * 2),
-          (uint32_t)(cutPrimStride * 3),
-          (uint32_t)(cutPrimStride * 4),
-          (uint32_t)(cutPrimStride * 5),
-          (uint32_t)(cutPrimStride * 6),
-          (uint32_t)(cutPrimStride * 7) } );
-
     vCount = SUB(vCount, VIMMED1(1));
-    Value *vOffset = ADD(UDIV(vCount, VIMMED1(8)), vOffsets);
+    Value *vOffset = ADD(UDIV(vCount, VIMMED1(8)), VIMMED1(VERTEX_COUNT_SIZE));
     Value *vValue = SHL(VIMMED1(1), UREM(vCount, VIMMED1(8)));
 
     vValue = TRUNC(vValue, VectorType::get(mInt8Ty, 8));
 
-    Value *vPtrs = GEP(pCutBuffer, vOffset);
-    vPtrs =
-       BITCAST(vPtrs, VectorType::get(PointerType::get(mInt8Ty, 0), JM()->mVWidth));
+    Value *pStack = STACKSAVE();
+    Value *pTmpPtr = ALLOCA(mInt8Ty, C(4)); // used for dummy read/write for lane masking
 
-    Value *vGather = MASKED_GATHER(vPtrs, 32, vMask1);
-    vValue = OR(vGather, vValue);
-    MASKED_SCATTER(vValue, vPtrs, 32, vMask1);
+    for (uint32_t lane = 0; lane < mVWidth; ++lane) {
+       Value *vLaneOffset = VEXTRACT(vOffset, C(lane));
+       Value *pStream = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pStreams, lane});
+       Value *pStreamOffset = GEP(pStream, vLaneOffset);
+
+       Value *pLaneMask = VEXTRACT(vMask1, C(lane));
+       pStreamOffset = SELECT(pLaneMask, pStreamOffset, pTmpPtr);
+
+       Value *vVal = LOAD(pStreamOffset);
+       vVal = OR(vVal, VEXTRACT(vValue, C(lane)));
+       STORE(vVal, pStreamOffset);
+    }
+
+    STACKRESTORE(pStack);
 }
 
 void
@@ -533,7 +529,14 @@ BuilderSWR::swr_gs_llvm_epilogue(const struct lp_build_tgsi_gs_iface *gs_base,
 
    IRB()->SetInsertPoint(unwrap(LLVMGetInsertBlock(gallivm->builder)));
 
-   STORE(unwrap(total_emitted_vertices_vec), iface->pGsCtx, {0, SWR_GS_CONTEXT_vertexCount});
+   // Store emit count to each output stream in the first DWORD
+   for (uint32_t lane = 0; lane < mVWidth; ++lane)
+   {
+      Value* pStream = LOAD(iface->pGsCtx, {0, SWR_GS_CONTEXT_pStreams, lane});
+      pStream = BITCAST(pStream, mInt32PtrTy);
+      Value* pLaneCount = VEXTRACT(unwrap(total_emitted_vertices_vec), C(lane));
+      STORE(pLaneCount, pStream);
+   }
 }
 
 PFN_GS_FUNC
@@ -541,6 +544,8 @@ BuilderSWR::CompileGS(struct swr_context *ctx, swr_jit_gs_key &key)
 {
    SWR_GS_STATE *pGS = &ctx->gs->gsState;
    struct tgsi_shader_info *info = &ctx->gs->info.base;
+
+   memset(pGS, 0, sizeof(*pGS));
 
    pGS->gsEnable = true;
 
@@ -555,6 +560,18 @@ BuilderSWR::CompileGS(struct swr_context *ctx, swr_jit_gs_key &key)
    pGS->singleStreamID = 0;
 
    pGS->vertexAttribOffset = VERTEX_ATTRIB_START_SLOT; // TODO: optimize
+   pGS->srcVertexAttribOffset = VERTEX_ATTRIB_START_SLOT; // TODO: optimize
+   pGS->inputVertStride = pGS->numInputAttribs + pGS->vertexAttribOffset;
+   pGS->outputVertexSize = SWR_VTX_NUM_SLOTS;
+   pGS->controlDataSize = 8; // GS ouputs max of 8 32B units
+   pGS->controlDataOffset = VERTEX_COUNT_SIZE;
+   pGS->outputVertexOffset = pGS->controlDataOffset + CONTROL_HEADER_SIZE;
+
+   pGS->allocationSize =
+      VERTEX_COUNT_SIZE + // vertex count
+      CONTROL_HEADER_SIZE + // control header
+      (SWR_VTX_NUM_SLOTS * 16) * // sizeof vertex
+      pGS->maxNumVerts; // num verts
 
    struct swr_geometry_shader *gs = ctx->gs;
 
@@ -635,10 +652,11 @@ BuilderSWR::CompileGS(struct swr_context *ctx, swr_jit_gs_key &key)
                        lp_type_float_vec(32, 32 * 8), wrap(mask_val));
 
    // zero out cut buffer so we can load/modify/store bits
-   MEMSET(LOAD(pGsCtx, {0, SWR_GS_CONTEXT_pCutOrStreamIdBuffer}),
-          C((char)0),
-          pGS->instanceCount * ((pGS->maxNumVerts + 7) / 8) * JM()->mVWidth,
-          sizeof(float) * KNOB_SIMD_WIDTH);
+   for (uint32_t lane = 0; lane < mVWidth; ++lane)
+   {
+      Value* pStream = LOAD(pGsCtx, {0, SWR_GS_CONTEXT_pStreams, lane});
+      MEMSET(pStream, C((char)0), VERTEX_COUNT_SIZE + CONTROL_HEADER_SIZE, sizeof(float) * KNOB_SIMD_WIDTH);
+   }
 
    struct swr_gs_llvm_iface gs_iface;
    gs_iface.base.fetch_input = ::swr_gs_llvm_fetch_input;
@@ -706,7 +724,7 @@ swr_compile_gs(struct swr_context *ctx, swr_jit_gs_key &key)
 void
 BuilderSWR::WriteVS(Value *pVal, Value *pVsContext, Value *pVtxOutput, unsigned slot, unsigned channel)
 {
-#if USE_SIMD16_FRONTEND
+#if USE_SIMD16_FRONTEND && !USE_SIMD16_VS
    // interleave the simdvertex components into the dest simd16vertex
    //   slot16offset = slot8offset * 2
    //   comp16offset = comp8offset * 2 + alternateOffset
@@ -769,6 +787,9 @@ BuilderSWR::CompileVS(struct swr_context *ctx, swr_jit_vs_key &key)
    const_sizes_ptr->setName("num_vs_constants");
 
    Value *vtxInput = LOAD(pVsCtx, {0, SWR_VS_CONTEXT_pVin});
+#if USE_SIMD16_VS
+   vtxInput = BITCAST(vtxInput, PointerType::get(Gen_simd16vertex(JM()), 0));
+#endif
 
    for (uint32_t attrib = 0; attrib < PIPE_MAX_SHADER_INPUTS; attrib++) {
       const unsigned mask = swr_vs->info.base.input_usage_mask[attrib];
@@ -786,11 +807,22 @@ BuilderSWR::CompileVS(struct swr_context *ctx, swr_jit_vs_key &key)
    struct lp_bld_tgsi_system_values system_values;
    memset(&system_values, 0, sizeof(system_values));
    system_values.instance_id = wrap(LOAD(pVsCtx, {0, SWR_VS_CONTEXT_InstanceID}));
+
+#if USE_SIMD16_VS
+   system_values.vertex_id = wrap(LOAD(pVsCtx, {0, SWR_VS_CONTEXT_VertexID16}));
+#else
    system_values.vertex_id = wrap(LOAD(pVsCtx, {0, SWR_VS_CONTEXT_VertexID}));
+#endif
+
+#if USE_SIMD16_VS
+   uint32_t vectorWidth = mVWidth16;
+#else
+   uint32_t vectorWidth = mVWidth;
+#endif
 
    lp_build_tgsi_soa(gallivm,
                      swr_vs->pipe.tokens,
-                     lp_type_float_vec(32, 32 * 8),
+                     lp_type_float_vec(32, 32 * vectorWidth),
                      NULL, // mask
                      wrap(consts_ptr),
                      wrap(const_sizes_ptr),
@@ -808,6 +840,9 @@ BuilderSWR::CompileVS(struct swr_context *ctx, swr_jit_vs_key &key)
    IRB()->SetInsertPoint(unwrap(LLVMGetInsertBlock(gallivm->builder)));
 
    Value *vtxOutput = LOAD(pVsCtx, {0, SWR_VS_CONTEXT_pVout});
+#if USE_SIMD16_VS
+   vtxOutput = BITCAST(vtxOutput, PointerType::get(Gen_simd16vertex(JM()), 0));
+#endif
 
    for (uint32_t channel = 0; channel < TGSI_NUM_CHANNELS; channel++) {
       for (uint32_t attrib = 0; attrib < PIPE_MAX_SHADER_OUTPUTS; attrib++) {
@@ -881,10 +916,21 @@ BuilderSWR::CompileVS(struct swr_context *ctx, swr_jit_vs_key &key)
          Value *py = LOAD(GEP(hPrivateData, {0, swr_draw_context_userClipPlanes, val, 1}));
          Value *pz = LOAD(GEP(hPrivateData, {0, swr_draw_context_userClipPlanes, val, 2}));
          Value *pw = LOAD(GEP(hPrivateData, {0, swr_draw_context_userClipPlanes, val, 3}));
-         Value *dist = FADD(FMUL(unwrap(cx), VBROADCAST(px)),
-                            FADD(FMUL(unwrap(cy), VBROADCAST(py)),
-                                 FADD(FMUL(unwrap(cz), VBROADCAST(pz)),
-                                      FMUL(unwrap(cw), VBROADCAST(pw)))));
+#if USE_SIMD16_VS
+         Value *bpx = VBROADCAST_16(px);
+         Value *bpy = VBROADCAST_16(py);
+         Value *bpz = VBROADCAST_16(pz);
+         Value *bpw = VBROADCAST_16(pw);
+#else
+         Value *bpx = VBROADCAST(px);
+         Value *bpy = VBROADCAST(py);
+         Value *bpz = VBROADCAST(pz);
+         Value *bpw = VBROADCAST(pw);
+#endif
+         Value *dist = FADD(FMUL(unwrap(cx), bpx),
+                            FADD(FMUL(unwrap(cy), bpy),
+                                 FADD(FMUL(unwrap(cz), bpz),
+                                      FMUL(unwrap(cw), bpw))));
 
          if (val < 4)
             WriteVS(dist, pVsCtx, vtxOutput, VERTEX_CLIPCULL_DIST_LO_SLOT, val);
@@ -1241,7 +1287,7 @@ BuilderSWR::CompileFS(struct swr_context *ctx, swr_jit_fs_key &key)
 
          // peform a gather to grab stipple words for each lane
          Value *vStipple = GATHERDD(VUNDEF_I(), stipplePtr, vYstipple,
-                                    VIMMED1(0xffffffff), C((char)4));
+                                    VIMMED1(0xffffffff), 4);
 
          // create a mask with one bit corresponding to the x stipple
          // and AND it with the pattern, to see if we have a bit

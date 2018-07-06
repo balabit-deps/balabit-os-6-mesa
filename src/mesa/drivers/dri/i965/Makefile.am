@@ -30,7 +30,7 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/src/mesa/ \
 	-I$(top_srcdir)/src/gallium/include \
 	-I$(top_srcdir)/src/gallium/auxiliary \
-	-I$(top_builddir)/src/mesa/drivers/dri/common \
+	-I$(top_builddir)/src/util \
 	-I$(top_srcdir)/src/mesa/drivers/dri/common \
 	-I$(top_srcdir)/src/gtest/include \
 	-I$(top_builddir)/src/compiler/glsl \
@@ -41,6 +41,7 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/include/drm-uapi \
 	$(DEFINES) \
 	$(VISIBILITY_CFLAGS) \
+	$(WNO_OVERRIDE_INIT) \
 	$(LIBDRM_CFLAGS) \
 	$(VALGRIND_CFLAGS) \
 	-msse2
@@ -114,7 +115,10 @@ EXTRA_DIST = \
 	brw_oa_kblgt2.xml \
 	brw_oa_kblgt3.xml \
 	brw_oa_glk.xml \
-	brw_oa.py
+	brw_oa_cflgt2.xml \
+	brw_oa_cflgt3.xml \
+	brw_oa.py \
+	meson.build
 
 # Note: we avoid using a multi target rule here and outputting both the
 # .c and .h files in one go so we don't hit problems with parallel

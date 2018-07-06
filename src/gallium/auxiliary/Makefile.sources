@@ -83,8 +83,6 @@ C_SOURCES := \
 	os/os_process.c \
 	os/os_process.h \
 	os/os_thread.h \
-	os/os_time.c \
-	os/os_time.h \
 	pipebuffer/pb_buffer_fenced.c \
 	pipebuffer/pb_buffer_fenced.h \
 	pipebuffer/pb_buffer.h \
@@ -151,6 +149,7 @@ C_SOURCES := \
 	tgsi/tgsi_from_mesa.h \
 	tgsi/tgsi_info.c \
 	tgsi/tgsi_info.h \
+	tgsi/tgsi_info_opcodes.h \
 	tgsi/tgsi_iterate.c \
 	tgsi/tgsi_iterate.h \
 	tgsi/tgsi_lowering.c \
@@ -183,6 +182,8 @@ C_SOURCES := \
 	translate/translate_generic.c \
 	translate/translate_sse.c \
 	util/dbghelp.h \
+	util/u_async_debug.h \
+	util/u_async_debug.c \
 	util/u_bitcast.h \
 	util/u_bitmask.c \
 	util/u_bitmask.h \
@@ -253,13 +254,15 @@ C_SOURCES := \
 	util/u_hash_table.h \
 	util/u_helpers.c \
 	util/u_helpers.h \
+	util/u_idalloc.c \
+	util/u_idalloc.h \
 	util/u_index_modify.c \
 	util/u_index_modify.h \
 	util/u_inlines.h \
-	util/u_keymap.c \
-	util/u_keymap.h \
 	util/u_linear.c \
 	util/u_linear.h \
+	util/u_log.c \
+	util/u_log.h \
 	util/u_math.c \
 	util/u_math.h \
 	util/u_memory.h \
@@ -299,9 +302,10 @@ C_SOURCES := \
 	util/u_texture.h \
 	util/u_tile.c \
 	util/u_tile.h \
-	util/u_time.h \
 	util/u_transfer.c \
 	util/u_transfer.h \
+	util/u_transfer_helper.c \
+	util/u_transfer_helper.h \
 	util/u_threaded_context.c \
 	util/u_threaded_context.h \
 	util/u_threaded_context_calls.h \

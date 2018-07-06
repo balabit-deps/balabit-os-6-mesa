@@ -24,7 +24,7 @@
 #include "util/u_format.h"
 #include "util/u_format_s3tc.h"
 #include "util/u_memory.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 #include "vl/vl_decoder.h"
 #include "vl/vl_video_buffer.h"
 
@@ -96,11 +96,9 @@ static int r300_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
         case PIPE_CAP_NPOT_TEXTURES:
         case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
         case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
-        case PIPE_CAP_TWO_SIDED_STENCIL:
         case PIPE_CAP_ANISOTROPIC_FILTER:
         case PIPE_CAP_POINT_SPRITE:
         case PIPE_CAP_OCCLUSION_QUERY:
-        case PIPE_CAP_TEXTURE_SHADOW_MAP:
         case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
         case PIPE_CAP_BLEND_EQUATION_SEPARATE:
         case PIPE_CAP_VERTEX_ELEMENT_INSTANCE_DIVISOR:
@@ -109,7 +107,6 @@ static int r300_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
         case PIPE_CAP_CONDITIONAL_RENDER:
         case PIPE_CAP_TEXTURE_BARRIER:
         case PIPE_CAP_TGSI_CAN_COMPACT_CONSTANTS:
-        case PIPE_CAP_USER_CONSTANT_BUFFERS:
         case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
         case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
         case PIPE_CAP_CLIP_HALFZ:
@@ -127,7 +124,7 @@ static int r300_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 
         /* r300 cannot do swizzling of compressed textures. Supported otherwise. */
         case PIPE_CAP_TEXTURE_SWIZZLE:
-            return util_format_s3tc_enabled ? r300screen->caps.dxtc_swizzle : 1;
+            return r300screen->caps.dxtc_swizzle;
 
         /* We don't support color clamping on r500, so that we can use color
          * intepolators for generic varyings. */
@@ -242,6 +239,15 @@ static int r300_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
         case PIPE_CAP_CAN_BIND_CONST_BUFFER_AS_VERTEX:
         case PIPE_CAP_POST_DEPTH_COVERAGE:
         case PIPE_CAP_BINDLESS_TEXTURE:
+        case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+        case PIPE_CAP_QUERY_SO_OVERFLOW:
+        case PIPE_CAP_MEMOBJ:
+        case PIPE_CAP_LOAD_CONSTBUF:
+        case PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS:
+        case PIPE_CAP_TILE_RASTER_ORDER:
+        case PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES:
+        case PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET:
+        case PIPE_CAP_CONTEXT_PRIORITY_MASK:
             return 0;
 
         /* SWTCL-only features. */
@@ -350,13 +356,18 @@ static int r300_get_shader_param(struct pipe_screen *pscreen,
         case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
         case PIPE_SHADER_CAP_SUBROUTINES:
         case PIPE_SHADER_CAP_INTEGERS:
+        case PIPE_SHADER_CAP_INT64_ATOMICS:
+        case PIPE_SHADER_CAP_FP16:
         case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+        case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
         case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
         case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
         case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
         case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
             return 0;
         case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
             return 32;
@@ -409,15 +420,20 @@ static int r300_get_shader_param(struct pipe_screen *pscreen,
         case PIPE_SHADER_CAP_INDIRECT_TEMP_ADDR:
         case PIPE_SHADER_CAP_SUBROUTINES:
         case PIPE_SHADER_CAP_INTEGERS:
+        case PIPE_SHADER_CAP_FP16:
+        case PIPE_SHADER_CAP_INT64_ATOMICS:
         case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
         case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
         case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+        case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
         case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
         case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
         case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
         case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
             return 0;
         case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
             return 32;
@@ -724,7 +740,8 @@ static boolean r300_fence_finish(struct pipe_screen *screen,
     return rws->fence_wait(rws, fence, timeout);
 }
 
-struct pipe_screen* r300_screen_create(struct radeon_winsys *rws, unsigned flags)
+struct pipe_screen* r300_screen_create(struct radeon_winsys *rws,
+                                       const struct pipe_screen_config *config)
 {
     struct r300_screen *r300screen = CALLOC_STRUCT(r300_screen);
 
@@ -762,7 +779,6 @@ struct pipe_screen* r300_screen_create(struct radeon_winsys *rws, unsigned flags
 
     slab_create_parent(&r300screen->pool_transfers, sizeof(struct pipe_transfer), 64);
 
-    util_format_s3tc_init();
     (void) mtx_init(&r300screen->cmask_mutex, mtx_plain);
 
     return &r300screen->screen;

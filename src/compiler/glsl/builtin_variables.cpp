@@ -38,11 +38,6 @@ static const struct gl_builtin_uniform_element gl_NumSamples_elements[] = {
    {NULL, {STATE_NUM_SAMPLES, 0, 0}, SWIZZLE_XXXX}
 };
 
-/* only for TCS */
-static const struct gl_builtin_uniform_element gl_PatchVerticesIn_elements[] = {
-   {NULL, {STATE_INTERNAL, STATE_TCS_PATCH_VERTICES_IN}, SWIZZLE_XXXX}
-};
-
 static const struct gl_builtin_uniform_element gl_DepthRange_elements[] = {
    {"near", {STATE_DEPTH_RANGE, 0, 0}, SWIZZLE_XXXX},
    {"far", {STATE_DEPTH_RANGE, 0, 0}, SWIZZLE_YYYY},
@@ -240,7 +235,6 @@ static const struct gl_builtin_uniform_element gl_NormalMatrix_elements[] = {
 #define STATEVAR(name) {#name, name ## _elements, ARRAY_SIZE(name ## _elements)}
 
 static const struct gl_builtin_uniform_desc _mesa_builtin_uniform_desc[] = {
-   STATEVAR(gl_PatchVerticesIn),
    STATEVAR(gl_NumSamples),
    STATEVAR(gl_DepthRange),
    STATEVAR(gl_ClipPlane),
@@ -1017,6 +1011,11 @@ builtin_variable_generator::generate_vs_special_vars()
 
    if (state->is_version(130, 300))
       add_system_value(SYSTEM_VALUE_VERTEX_ID, int_t, "gl_VertexID");
+   if (state->is_version(460, 0)) {
+      add_system_value(SYSTEM_VALUE_BASE_VERTEX, int_t, "gl_BaseVertex");
+      add_system_value(SYSTEM_VALUE_BASE_INSTANCE, int_t, "gl_BaseInstance");
+      add_system_value(SYSTEM_VALUE_DRAW_ID, int_t, "gl_DrawID");
+   }
    if (state->ARB_draw_instanced_enable)
       add_system_value(SYSTEM_VALUE_INSTANCE_ID, int_t, "gl_InstanceIDARB");
    if (state->ARB_draw_instanced_enable || state->is_version(140, 300))
@@ -1062,12 +1061,7 @@ builtin_variable_generator::generate_tcs_special_vars()
 {
    add_system_value(SYSTEM_VALUE_PRIMITIVE_ID, int_t, "gl_PrimitiveID");
    add_system_value(SYSTEM_VALUE_INVOCATION_ID, int_t, "gl_InvocationID");
-
-   if (state->ctx->Const.LowerTCSPatchVerticesIn) {
-      add_uniform(int_t, "gl_PatchVerticesIn");
-   } else {
-      add_system_value(SYSTEM_VALUE_VERTICES_IN, int_t, "gl_PatchVerticesIn");
-   }
+   add_system_value(SYSTEM_VALUE_VERTICES_IN, int_t, "gl_PatchVerticesIn");
 
    add_output(VARYING_SLOT_TESS_LEVEL_OUTER, array(float_t, 4),
               "gl_TessLevelOuter")->data.patch = 1;

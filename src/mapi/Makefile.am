@@ -36,7 +36,12 @@ EXTRA_DIST = \
 	mapi_abi.py \
 	glapi/SConscript \
 	glapi/registry/gl.xml \
-	shared-glapi/SConscript
+	shared-glapi/SConscript \
+	es1api/meson.build \
+	es2api/meson.build \
+	glapi/meson.build \
+	shared-glapi/meson.build \
+	meson.build
 
 AM_CFLAGS = \
 	$(PTHREAD_CFLAGS) \
@@ -47,7 +52,9 @@ AM_CPPFLAGS =							\
 	-I$(top_srcdir)/include					\
 	-I$(top_srcdir)/src					\
 	-I$(top_builddir)/src/mapi				\
-	-I$(top_srcdir)/src/mapi
+	-I$(top_srcdir)/src/mapi				\
+	-I$(top_builddir)/src/mapi/glapi			\
+	-I$(top_srcdir)/src/mapi/glapi
 
 include Makefile.sources
 
@@ -113,7 +120,6 @@ endif
 glapi_libglapi_la_SOURCES =
 glapi_libglapi_la_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
-	-I$(top_srcdir)/src/mapi/glapi \
 	-I$(top_srcdir)/src/mesa
 
 if HAVE_APPLEDRI

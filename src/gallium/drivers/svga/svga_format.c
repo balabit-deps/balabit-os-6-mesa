@@ -49,6 +49,11 @@ struct format_compat_entry
    const SVGA3dSurfaceFormat *compat_format;
 };
 
+
+/**
+ * Table mapping Gallium formats to SVGA3d vertex/pixel formats.
+ * Note: the table is ordered according to PIPE_FORMAT_x order.
+ */
 static const struct vgpu10_format_entry format_conversion_table[] =
 {
    /* Gallium format                    SVGA3D vertex format        SVGA3D pixel format          Flags */
@@ -360,6 +365,9 @@ static const struct vgpu10_format_entry format_conversion_table[] =
    { PIPE_FORMAT_ASTC_12x10_SRGB,       SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
    { PIPE_FORMAT_ASTC_12x12_SRGB,       SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
    { PIPE_FORMAT_P016,                  SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
+   { PIPE_FORMAT_R10G10B10X2_UNORM,     SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
+   { PIPE_FORMAT_A1B5G5R5_UNORM,        SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
+   { PIPE_FORMAT_X1B5G5R5_UNORM,        SVGA3D_FORMAT_INVALID,      SVGA3D_FORMAT_INVALID,       0 },
 };
 
 
@@ -1826,9 +1834,9 @@ svga_typeless_format(SVGA3dSurfaceFormat format)
    case SVGA3D_R32G32_FLOAT:
       return SVGA3D_R32G32_TYPELESS;
    case SVGA3D_D32_FLOAT_S8X24_UINT:
-      return SVGA3D_R32G8X24_TYPELESS;
    case SVGA3D_X32_G8X24_UINT:
-      return SVGA3D_R32_FLOAT_X8X24;
+   case SVGA3D_R32G8X24_TYPELESS:
+      return SVGA3D_R32G8X24_TYPELESS;
    case SVGA3D_R10G10B10A2_UINT:
    case SVGA3D_R10G10B10A2_UNORM:
       return SVGA3D_R10G10B10A2_TYPELESS;
@@ -1837,6 +1845,7 @@ svga_typeless_format(SVGA3dSurfaceFormat format)
    case SVGA3D_R8G8B8A8_UNORM_SRGB:
    case SVGA3D_R8G8B8A8_UINT:
    case SVGA3D_R8G8B8A8_SINT:
+   case SVGA3D_R8G8B8A8_TYPELESS:
       return SVGA3D_R8G8B8A8_TYPELESS;
    case SVGA3D_R16G16_UINT:
    case SVGA3D_R16G16_SINT:
@@ -1848,8 +1857,10 @@ svga_typeless_format(SVGA3dSurfaceFormat format)
    case SVGA3D_R32_FLOAT:
    case SVGA3D_R32_UINT:
    case SVGA3D_R32_SINT:
+   case SVGA3D_R32_TYPELESS:
       return SVGA3D_R32_TYPELESS;
    case SVGA3D_D24_UNORM_S8_UINT:
+   case SVGA3D_R24G8_TYPELESS:
       return SVGA3D_R24G8_TYPELESS;
    case SVGA3D_X24_G8_UINT:
       return SVGA3D_R24_UNORM_X8;
@@ -1864,6 +1875,7 @@ svga_typeless_format(SVGA3dSurfaceFormat format)
    case SVGA3D_R16_SNORM:
    case SVGA3D_R16_SINT:
    case SVGA3D_R16_FLOAT:
+   case SVGA3D_R16_TYPELESS:
       return SVGA3D_R16_TYPELESS;
    case SVGA3D_R8_UNORM:
    case SVGA3D_R8_UINT:
@@ -1872,18 +1884,23 @@ svga_typeless_format(SVGA3dSurfaceFormat format)
       return SVGA3D_R8_TYPELESS;
    case SVGA3D_B8G8R8A8_UNORM_SRGB:
    case SVGA3D_B8G8R8A8_UNORM:
+   case SVGA3D_B8G8R8A8_TYPELESS:
       return SVGA3D_B8G8R8A8_TYPELESS;
    case SVGA3D_B8G8R8X8_UNORM_SRGB:
    case SVGA3D_B8G8R8X8_UNORM:
+   case SVGA3D_B8G8R8X8_TYPELESS:
       return SVGA3D_B8G8R8X8_TYPELESS;
    case SVGA3D_BC1_UNORM:
    case SVGA3D_BC1_UNORM_SRGB:
+   case SVGA3D_BC1_TYPELESS:
       return SVGA3D_BC1_TYPELESS;
    case SVGA3D_BC2_UNORM:
    case SVGA3D_BC2_UNORM_SRGB:
+   case SVGA3D_BC2_TYPELESS:
       return SVGA3D_BC2_TYPELESS;
    case SVGA3D_BC3_UNORM:
    case SVGA3D_BC3_UNORM_SRGB:
+   case SVGA3D_BC3_TYPELESS:
       return SVGA3D_BC3_TYPELESS;
    case SVGA3D_BC4_UNORM:
    case SVGA3D_BC4_SNORM:
@@ -2052,4 +2069,123 @@ svga_linear_to_srgb(SVGA3dSurfaceFormat format)
    default:
       return format;
    }
+}
+
+
+/**
+ * Implement pipe_screen::is_format_supported().
+ * \param bindings  bitmask of PIPE_BIND_x flags
+ */
+boolean
+svga_is_format_supported(struct pipe_screen *screen,
+                         enum pipe_format format,
+                         enum pipe_texture_target target,
+                         unsigned sample_count,
+                         unsigned bindings)
+{
+   struct svga_screen *ss = svga_screen(screen);
+   SVGA3dSurfaceFormat svga_format;
+   SVGA3dSurfaceFormatCaps caps;
+   SVGA3dSurfaceFormatCaps mask;
+
+   assert(bindings);
+
+   if (sample_count > 1) {
+      /* In ms_samples, if bit N is set it means that we support
+       * multisample with N+1 samples per pixel.
+       */
+      if ((ss->ms_samples & (1 << (sample_count - 1))) == 0) {
+         return FALSE;
+      }
+   }
+
+   svga_format = svga_translate_format(ss, format, bindings);
+   if (svga_format == SVGA3D_FORMAT_INVALID) {
+      return FALSE;
+   }
+
+   if (!ss->sws->have_vgpu10 &&
+       util_format_is_srgb(format) &&
+       (bindings & (PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_RENDER_TARGET))) {
+       /* We only support sRGB rendering with vgpu10 */
+      return FALSE;
+   }
+
+   /*
+    * For VGPU10 vertex formats, skip querying host capabilities
+    */
+
+   if (ss->sws->have_vgpu10 && (bindings & PIPE_BIND_VERTEX_BUFFER)) {
+      SVGA3dSurfaceFormat svga_format;
+      unsigned flags;
+      svga_translate_vertex_format_vgpu10(format, &svga_format, &flags);
+      return svga_format != SVGA3D_FORMAT_INVALID;
+   }
+
+   /*
+    * Override host capabilities, so that we end up with the same
+    * visuals for all virtual hardware implementations.
+    */
+   if (bindings & PIPE_BIND_DISPLAY_TARGET) {
+      switch (svga_format) {
+      case SVGA3D_A8R8G8B8:
+      case SVGA3D_X8R8G8B8:
+      case SVGA3D_R5G6B5:
+         break;
+
+      /* VGPU10 formats */
+      case SVGA3D_B8G8R8A8_UNORM:
+      case SVGA3D_B8G8R8X8_UNORM:
+      case SVGA3D_B5G6R5_UNORM:
+      case SVGA3D_B8G8R8X8_UNORM_SRGB:
+      case SVGA3D_B8G8R8A8_UNORM_SRGB:
+      case SVGA3D_R8G8B8A8_UNORM_SRGB:
+         break;
+
+      /* Often unsupported/problematic. This means we end up with the same
+       * visuals for all virtual hardware implementations.
+       */
+      case SVGA3D_A4R4G4B4:
+      case SVGA3D_A1R5G5B5:
+         return FALSE;
+
+      default:
+         return FALSE;
+      }
+   }
+
+   /*
+    * Query the host capabilities.
+    */
+   svga_get_format_cap(ss, svga_format, &caps);
+
+   if (bindings & PIPE_BIND_RENDER_TARGET) {
+      /* Check that the color surface is blendable, unless it's an
+       * integer format.
+       */
+      if (!svga_format_is_integer(svga_format) &&
+          (caps.value & SVGA3DFORMAT_OP_NOALPHABLEND)) {
+         return FALSE;
+      }
+   }
+
+   mask.value = 0;
+   if (bindings & PIPE_BIND_RENDER_TARGET) {
+      mask.value |= SVGA3DFORMAT_OP_OFFSCREEN_RENDERTARGET;
+   }
+   if (bindings & PIPE_BIND_DEPTH_STENCIL) {
+      mask.value |= SVGA3DFORMAT_OP_ZSTENCIL;
+   }
+   if (bindings & PIPE_BIND_SAMPLER_VIEW) {
+      mask.value |= SVGA3DFORMAT_OP_TEXTURE;
+   }
+
+   if (target == PIPE_TEXTURE_CUBE) {
+      mask.value |= SVGA3DFORMAT_OP_CUBETEXTURE;
+   }
+   else if (target == PIPE_TEXTURE_3D) {
+      mask.value |= SVGA3DFORMAT_OP_VOLUMETEXTURE;
+   }
+
+   return (caps.value & mask.value) == mask.value;
 }

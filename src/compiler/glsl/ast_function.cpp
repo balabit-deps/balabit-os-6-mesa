@@ -37,6 +37,7 @@ process_parameters(exec_list *instructions, exec_list *actual_parameters,
                    exec_list *parameters,
                    struct _mesa_glsl_parse_state *state)
 {
+   void *mem_ctx = state;
    unsigned count = 0;
 
    foreach_list_typed(ast_node, ast, link, parameters) {
@@ -48,7 +49,9 @@ process_parameters(exec_list *instructions, exec_list *actual_parameters,
       ast->set_is_lhs(true);
       ir_rvalue *result = ast->hir(instructions, state);
 
-      ir_constant *const constant = result->constant_expression_value();
+      ir_constant *const constant =
+         result->constant_expression_value(mem_ctx);
+
       if (constant != NULL)
          result = constant;
 
@@ -442,8 +445,7 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
               exec_list *actual_parameters,
               ir_variable *sub_var,
               ir_rvalue *array_idx,
-              struct _mesa_glsl_parse_state *state,
-              bool inline_immediately)
+              struct _mesa_glsl_parse_state *state)
 {
    void *ctx = state;
    exec_list post_call_conversions;
@@ -528,7 +530,8 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
     * instructions; just generate an ir_constant.
     */
    if (state->is_version(120, 100)) {
-      ir_constant *value = sig->constant_expression_value(actual_parameters,
+      ir_constant *value = sig->constant_expression_value(ctx,
+                                                          actual_parameters,
                                                           NULL);
       if (value != NULL) {
          return value;
@@ -555,7 +558,8 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
    ir_call *call = new(ctx) ir_call(sig, deref,
                                     actual_parameters, sub_var, array_idx);
    instructions->push_tail(call);
-   if (inline_immediately) {
+   if (sig->is_builtin()) {
+      /* inline immediately */
       call->generate_inline(call);
       call->remove();
    }
@@ -953,7 +957,7 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    assert(result->type == desired_type);
 
    /* Try constant folding; it may fold in the conversion we just added. */
-   ir_constant *const constant = result->constant_expression_value();
+   ir_constant *const constant = result->constant_expression_value(ctx);
    return (constant != NULL) ? (ir_rvalue *) constant : (ir_rvalue *) result;
 }
 
@@ -981,6 +985,7 @@ static bool
 implicitly_convert_component(ir_rvalue * &from, const glsl_base_type to,
                              struct _mesa_glsl_parse_state *state)
 {
+   void *mem_ctx = state;
    ir_rvalue *result = from;
 
    if (to != from->type->base_type) {
@@ -999,7 +1004,7 @@ implicitly_convert_component(ir_rvalue * &from, const glsl_base_type to,
       }
    }
 
-   ir_rvalue *const constant = result->constant_expression_value();
+   ir_rvalue *const constant = result->constant_expression_value(mem_ctx);
 
    if (constant != NULL)
       result = constant;
@@ -1137,7 +1142,7 @@ process_vec_mat_constructor(exec_list *instructions,
       if (var->type->is_matrix()) {
          ir_rvalue *lhs =
             new(ctx) ir_dereference_array(var, new(ctx) ir_constant(i));
-         assignment = new(ctx) ir_assignment(lhs, rhs, NULL);
+         assignment = new(ctx) ir_assignment(lhs, rhs);
       } else {
          /* use writemask rather than index for vector */
          assert(var->type->is_vector());
@@ -1273,7 +1278,7 @@ process_array_constructor(exec_list *instructions,
       ir_rvalue *lhs = new(ctx) ir_dereference_array(var,
                                                      new(ctx) ir_constant(i));
 
-      ir_instruction *assignment = new(ctx) ir_assignment(lhs, rhs, NULL);
+      ir_instruction *assignment = new(ctx) ir_assignment(lhs, rhs);
       instructions->push_tail(assignment);
 
       i++;
@@ -1286,7 +1291,7 @@ process_array_constructor(exec_list *instructions,
 /**
  * Determine if a list consists of a single scalar r-value
  */
-bool
+static bool
 single_scalar_parameter(exec_list *parameters)
 {
    const ir_rvalue *const p = (ir_rvalue *) parameters->get_head_raw();
@@ -1307,7 +1312,7 @@ single_scalar_parameter(exec_list *parameters)
  * An \c ir_dereference_variable of the temprorary generated in the constructor
  * body.
  */
-ir_rvalue *
+static ir_rvalue *
 emit_inline_vector_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1471,7 +1476,7 @@ emit_inline_vector_constructor(const glsl_type *type,
  * \c src_base + \c count must be less than or equal to the number of
  * components in the source vector.
  */
-ir_instruction *
+static ir_instruction *
 assign_to_matrix_column(ir_variable *var, unsigned column, unsigned row_base,
                         ir_rvalue *src, unsigned src_base, unsigned count,
                         void *mem_ctx)
@@ -1511,7 +1516,7 @@ assign_to_matrix_column(ir_variable *var, unsigned column, unsigned row_base,
  * An \c ir_dereference_variable of the temprorary generated in the constructor
  * body.
  */
-ir_rvalue *
+static ir_rvalue *
 emit_inline_matrix_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1558,8 +1563,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
 
       ir_instruction *inst =
          new(ctx) ir_assignment(new(ctx) ir_dereference_variable(rhs_var),
-                                new(ctx) ir_constant(rhs_var->type, &zero),
-                                NULL);
+                                new(ctx) ir_constant(rhs_var->type, &zero));
       instructions->push_tail(inst);
 
       ir_dereference *const rhs_ref =
@@ -1592,7 +1596,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
          ir_rvalue *const rhs = new(ctx) ir_swizzle(rhs_ref, rhs_swiz[i],
                                                     type->vector_elements);
 
-         inst = new(ctx) ir_assignment(col_ref, rhs, NULL);
+         inst = new(ctx) ir_assignment(col_ref, rhs);
          instructions->push_tail(inst);
       }
 
@@ -1605,7 +1609,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
          ir_rvalue *const rhs = new(ctx) ir_swizzle(rhs_ref, 1, 1, 1, 1,
                                                     type->vector_elements);
 
-         inst = new(ctx) ir_assignment(col_ref, rhs, NULL);
+         inst = new(ctx) ir_assignment(col_ref, rhs);
          instructions->push_tail(inst);
       }
    } else if (first_param->type->is_matrix()) {
@@ -1659,7 +1663,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
             ir_rvalue *const lhs =
                new(ctx) ir_dereference_array(var, new(ctx) ir_constant(col));
 
-            ir_instruction *inst = new(ctx) ir_assignment(lhs, rhs, NULL);
+            ir_instruction *inst = new(ctx) ir_assignment(lhs, rhs);
             instructions->push_tail(inst);
          }
       }
@@ -1677,7 +1681,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
       ir_dereference *const rhs_var_ref =
          new(ctx) ir_dereference_variable(rhs_var);
       ir_instruction *const inst =
-         new(ctx) ir_assignment(rhs_var_ref, first_param, NULL);
+         new(ctx) ir_assignment(rhs_var_ref, first_param);
       instructions->push_tail(inst);
 
       const unsigned last_row = MIN2(src_matrix->type->vector_elements,
@@ -1740,7 +1744,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
 
          ir_dereference *rhs_var_ref =
             new(ctx) ir_dereference_variable(rhs_var);
-         ir_instruction *inst = new(ctx) ir_assignment(rhs_var_ref, rhs, NULL);
+         ir_instruction *inst = new(ctx) ir_assignment(rhs_var_ref, rhs);
          instructions->push_tail(inst);
 
          do {
@@ -1780,7 +1784,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
 }
 
 
-ir_rvalue *
+static ir_rvalue *
 emit_inline_record_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1804,8 +1808,7 @@ emit_inline_record_constructor(const glsl_type *type,
       ir_rvalue *const rhs = ((ir_instruction *) node)->as_rvalue();
       assert(rhs != NULL);
 
-      ir_instruction *const assign =
-         new(mem_ctx) ir_assignment(lhs, rhs, NULL);
+      ir_instruction *const assign = new(mem_ctx) ir_assignment(lhs, rhs);
 
       instructions->push_tail(assign);
       node = node->next;
@@ -2167,8 +2170,8 @@ ast_function_expression::hir(exec_list *instructions,
             instructions->push_tail(var);
             instructions->push_tail(
                new(ctx) ir_assignment(new(ctx) ir_dereference_variable(var),
-                                      matrix, NULL));
-            var->constant_value = matrix->constant_expression_value();
+                                      matrix));
+            var->constant_value = matrix->constant_expression_value(ctx);
 
             /* Replace the matrix with dereferences of its columns. */
             for (int i = 0; i < matrix->type->matrix_columns; i++) {
@@ -2235,7 +2238,7 @@ ast_function_expression::hir(exec_list *instructions,
           * After doing so, track whether or not all the parameters to the
           * constructor are trivially constant valued expressions.
           */
-         ir_rvalue *const constant = result->constant_expression_value();
+         ir_rvalue *const constant = result->constant_expression_value(ctx);
 
          if (constant != NULL)
             result = constant;
@@ -2345,7 +2348,7 @@ ast_function_expression::hir(exec_list *instructions,
          }
 
          value = generate_call(instructions, sig, &actual_parameters, sub_var,
-                               array_idx, state, sig->is_builtin());
+                               array_idx, state);
          if (!value) {
             ir_variable *const tmp = new(ctx) ir_variable(glsl_type::void_type,
                                                           "void_var",

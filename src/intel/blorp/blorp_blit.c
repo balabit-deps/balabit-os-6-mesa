@@ -21,7 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#include "compiler/nir/nir_builder.h"
+#include "blorp_nir_builder.h"
 
 #include "blorp_priv.h"
 
@@ -268,7 +268,8 @@ blorp_nir_txf_ms(nir_builder *b, struct brw_blorp_blit_vars *v,
 }
 
 static nir_ssa_def *
-blorp_nir_txf_ms_mcs(nir_builder *b, struct brw_blorp_blit_vars *v, nir_ssa_def *pos)
+blorp_blit_txf_ms_mcs(nir_builder *b, struct brw_blorp_blit_vars *v,
+                      nir_ssa_def *pos)
 {
    nir_tex_instr *tex =
       blorp_create_nir_tex_instr(b, v, nir_texop_txf_ms_mcs,
@@ -621,7 +622,7 @@ blorp_nir_manual_blend_average(nir_builder *b, struct brw_blorp_blit_vars *v,
 
    nir_ssa_def *mcs = NULL;
    if (tex_aux_usage == ISL_AUX_USAGE_MCS)
-      mcs = blorp_nir_txf_ms_mcs(b, v, pos);
+      mcs = blorp_blit_txf_ms_mcs(b, v, pos);
 
    /* We add together samples using a binary tree structure, e.g. for 4x MSAA:
     *
@@ -679,6 +680,11 @@ blorp_nir_manual_blend_average(nir_builder *b, struct brw_blorp_blit_vars *v,
           * ld2dms are equivalent (since all samples are on sample slice 0).
           * Since we have already sampled from sample 0, all we need to do is
           * skip the remaining fetches and averaging if MCS is zero.
+          *
+          * It's also trivial to detect when the MCS has the magic clear color
+          * value.  In this case, the txf we did on sample 0 will return the
+          * clear color and we can skip the remaining fetches just like we do
+          * when MCS == 0.
           */
          nir_ssa_def *mcs_zero =
             nir_ieq(b, nir_channel(b, mcs, 0), nir_imm_int(b, 0));
@@ -686,9 +692,11 @@ blorp_nir_manual_blend_average(nir_builder *b, struct brw_blorp_blit_vars *v,
             mcs_zero = nir_iand(b, mcs_zero,
                nir_ieq(b, nir_channel(b, mcs, 1), nir_imm_int(b, 0)));
          }
+         nir_ssa_def *mcs_clear =
+            blorp_nir_mcs_is_clear_color(b, mcs, tex_samples);
 
          nir_if *if_stmt = nir_if_create(b->shader);
-         if_stmt->condition = nir_src_for_ssa(mcs_zero);
+         if_stmt->condition = nir_src_for_ssa(nir_ior(b, mcs_zero, mcs_clear));
          nir_cf_node_insert(b->cursor, &if_stmt->cf_node);
 
          b->cursor = nir_after_cf_list(&if_stmt->then_list);
@@ -783,7 +791,7 @@ blorp_nir_manual_blend_bilinear(nir_builder *b, nir_ssa_def *pos,
        */
       nir_ssa_def *mcs = NULL;
       if (key->tex_aux_usage == ISL_AUX_USAGE_MCS)
-         mcs = blorp_nir_txf_ms_mcs(b, v, sample_coords_int);
+         mcs = blorp_blit_txf_ms_mcs(b, v, sample_coords_int);
 
       /* Compute sample index and map the sample index to a sample number.
        * Sample index layout shows the numbering of slots in a rectangular
@@ -1260,7 +1268,7 @@ brw_blorp_build_nir_shader(struct blorp_context *blorp, void *mem_ctx,
          } else {
             nir_ssa_def *mcs = NULL;
             if (key->tex_aux_usage == ISL_AUX_USAGE_MCS)
-               mcs = blorp_nir_txf_ms_mcs(&b, &v, src_pos);
+               mcs = blorp_blit_txf_ms_mcs(&b, &v, src_pos);
 
             color = blorp_nir_txf_ms(&b, &v, src_pos, mcs, key->texture_data_type);
          }
@@ -1308,7 +1316,6 @@ brw_blorp_get_blit_kernel(struct blorp_context *blorp,
    void *mem_ctx = ralloc_context(NULL);
 
    const unsigned *program;
-   unsigned program_size;
    struct brw_wm_prog_data prog_data;
 
    nir_shader *nir = brw_blorp_build_nir_shader(blorp, mem_ctx, prog_key);
@@ -1322,11 +1329,11 @@ brw_blorp_get_blit_kernel(struct blorp_context *blorp,
    wm_key.multisample_fbo = prog_key->rt_samples > 1;
 
    program = blorp_compile_fs(blorp, mem_ctx, nir, &wm_key, false,
-                              &prog_data, &program_size);
+                              &prog_data);
 
    bool result =
       blorp->upload_shader(blorp, prog_key, sizeof(*prog_key),
-                           program, program_size,
+                           program, prog_data.base.program_size,
                            &prog_data.base, sizeof(prog_data),
                            &params->wm_prog_kernel, &params->wm_prog_data);
 
@@ -2206,6 +2213,7 @@ get_ccs_compatible_uint_format(const struct isl_format_layout *fmtl)
    case ISL_FORMAT_R32G32B32A32_UINT:
    case ISL_FORMAT_R32G32B32A32_UNORM:
    case ISL_FORMAT_R32G32B32A32_SNORM:
+   case ISL_FORMAT_R32G32B32X32_FLOAT:
       return ISL_FORMAT_R32G32B32A32_UINT;
 
    case ISL_FORMAT_R16G16B16A16_UNORM:
@@ -2325,11 +2333,11 @@ bitcast_color_value_to_uint(union isl_color_value color,
    return bits;
 }
 
-static void
-surf_convert_to_uncompressed(const struct isl_device *isl_dev,
-                             struct brw_blorp_surface_info *info,
-                             uint32_t *x, uint32_t *y,
-                             uint32_t *width, uint32_t *height)
+void
+blorp_surf_convert_to_uncompressed(const struct isl_device *isl_dev,
+                                   struct brw_blorp_surface_info *info,
+                                   uint32_t *x, uint32_t *y,
+                                   uint32_t *width, uint32_t *height)
 {
    const struct isl_format_layout *fmtl =
       isl_format_get_layout(info->surf.format);
@@ -2356,10 +2364,12 @@ surf_convert_to_uncompressed(const struct isl_device *isl_dev,
       *height = DIV_ROUND_UP(*height, fmtl->bh);
    }
 
-   assert(*x % fmtl->bw == 0);
-   assert(*y % fmtl->bh == 0);
-   *x /= fmtl->bw;
-   *y /= fmtl->bh;
+   if (x && y) {
+      assert(*x % fmtl->bw == 0);
+      assert(*y % fmtl->bh == 0);
+      *x /= fmtl->bw;
+      *y /= fmtl->bh;
+   }
 
    info->surf.logical_level0_px.width =
       DIV_ROUND_UP(info->surf.logical_level0_px.width, fmtl->bw);
@@ -2403,7 +2413,9 @@ blorp_copy(struct blorp_batch *batch,
                                dst_layer, ISL_FORMAT_UNSUPPORTED, true);
 
    struct brw_blorp_blit_prog_key wm_prog_key = {
-      .shader_type = BLORP_SHADER_TYPE_BLIT
+      .shader_type = BLORP_SHADER_TYPE_BLIT,
+      .need_src_offset = src_surf->tile_x_sa || src_surf->tile_y_sa,
+      .need_dst_offset = dst_surf->tile_x_sa || dst_surf->tile_y_sa,
    };
 
    const struct isl_format_layout *src_fmtl =
@@ -2477,14 +2489,15 @@ blorp_copy(struct blorp_batch *batch,
       isl_format_get_layout(params.dst.view.format)->channels.r.bits;
 
    if (src_fmtl->bw > 1 || src_fmtl->bh > 1) {
-      surf_convert_to_uncompressed(batch->blorp->isl_dev, &params.src,
-                                   &src_x, &src_y, &src_width, &src_height);
+      blorp_surf_convert_to_uncompressed(batch->blorp->isl_dev, &params.src,
+                                         &src_x, &src_y,
+                                         &src_width, &src_height);
       wm_prog_key.need_src_offset = true;
    }
 
    if (dst_fmtl->bw > 1 || dst_fmtl->bh > 1) {
-      surf_convert_to_uncompressed(batch->blorp->isl_dev, &params.dst,
-                                   &dst_x, &dst_y, NULL, NULL);
+      blorp_surf_convert_to_uncompressed(batch->blorp->isl_dev, &params.dst,
+                                         &dst_x, &dst_y, NULL, NULL);
       wm_prog_key.need_dst_offset = true;
    }
 
@@ -2512,4 +2525,124 @@ blorp_copy(struct blorp_batch *batch,
    };
 
    do_blorp_blit(batch, &params, &wm_prog_key, &coords);
+}
+
+static enum isl_format
+isl_format_for_size(unsigned size_B)
+{
+   switch (size_B) {
+   case 1:  return ISL_FORMAT_R8_UINT;
+   case 2:  return ISL_FORMAT_R8G8_UINT;
+   case 4:  return ISL_FORMAT_R8G8B8A8_UINT;
+   case 8:  return ISL_FORMAT_R16G16B16A16_UINT;
+   case 16: return ISL_FORMAT_R32G32B32A32_UINT;
+   default:
+      unreachable("Not a power-of-two format size");
+   }
+}
+
+/**
+ * Returns the greatest common divisor of a and b that is a power of two.
+ */
+static uint64_t
+gcd_pow2_u64(uint64_t a, uint64_t b)
+{
+   assert(a > 0 || b > 0);
+
+   unsigned a_log2 = ffsll(a) - 1;
+   unsigned b_log2 = ffsll(b) - 1;
+
+   /* If either a or b is 0, then a_log2 or b_log2 till be UINT_MAX in which
+    * case, the MIN2() will take the other one.  If both are 0 then we will
+    * hit the assert above.
+    */
+   return 1 << MIN2(a_log2, b_log2);
+}
+
+static void
+do_buffer_copy(struct blorp_batch *batch,
+               struct blorp_address *src,
+               struct blorp_address *dst,
+               int width, int height, int block_size)
+{
+   /* The actual format we pick doesn't matter as blorp will throw it away.
+    * The only thing that actually matters is the size.
+    */
+   enum isl_format format = isl_format_for_size(block_size);
+
+   UNUSED bool ok;
+   struct isl_surf surf;
+   ok = isl_surf_init(batch->blorp->isl_dev, &surf,
+                      .dim = ISL_SURF_DIM_2D,
+                      .format = format,
+                      .width = width,
+                      .height = height,
+                      .depth = 1,
+                      .levels = 1,
+                      .array_len = 1,
+                      .samples = 1,
+                      .row_pitch = width * block_size,
+                      .usage = ISL_SURF_USAGE_TEXTURE_BIT |
+                               ISL_SURF_USAGE_RENDER_TARGET_BIT,
+                      .tiling_flags = ISL_TILING_LINEAR_BIT);
+   assert(ok);
+
+   struct blorp_surf src_blorp_surf = {
+      .surf = &surf,
+      .addr = *src,
+   };
+
+   struct blorp_surf dst_blorp_surf = {
+      .surf = &surf,
+      .addr = *dst,
+   };
+
+   blorp_copy(batch, &src_blorp_surf, 0, 0, &dst_blorp_surf, 0, 0,
+              0, 0, 0, 0, width, height);
+}
+
+void
+blorp_buffer_copy(struct blorp_batch *batch,
+                  struct blorp_address src,
+                  struct blorp_address dst,
+                  uint64_t size)
+{
+   const struct gen_device_info *devinfo = batch->blorp->isl_dev->info;
+   uint64_t copy_size = size;
+
+   /* This is maximum possible width/height our HW can handle */
+   uint64_t max_surface_dim = 1 << (devinfo->gen >= 7 ? 14 : 13);
+
+   /* First, we compute the biggest format that can be used with the
+    * given offsets and size.
+    */
+   int bs = 16;
+   bs = gcd_pow2_u64(bs, src.offset);
+   bs = gcd_pow2_u64(bs, dst.offset);
+   bs = gcd_pow2_u64(bs, size);
+
+   /* First, we make a bunch of max-sized copies */
+   uint64_t max_copy_size = max_surface_dim * max_surface_dim * bs;
+   while (copy_size >= max_copy_size) {
+      do_buffer_copy(batch, &src, &dst, max_surface_dim, max_surface_dim, bs);
+      copy_size -= max_copy_size;
+      src.offset += max_copy_size;
+      dst.offset += max_copy_size;
+   }
+
+   /* Now make a max-width copy */
+   uint64_t height = copy_size / (max_surface_dim * bs);
+   assert(height < max_surface_dim);
+   if (height != 0) {
+      uint64_t rect_copy_size = height * max_surface_dim * bs;
+      do_buffer_copy(batch, &src, &dst, max_surface_dim, height, bs);
+      copy_size -= rect_copy_size;
+      src.offset += rect_copy_size;
+      dst.offset += rect_copy_size;
+   }
+
+   /* Finally, make a small copy to finish it off */
+   if (copy_size != 0) {
+      do_buffer_copy(batch, &src, &dst, copy_size / bs, 1, bs);
+   }
 }

@@ -25,7 +25,7 @@ endif
 
 SUBDIRS =
 
-EXTRA_DIST = SConscript
+EXTRA_DIST = SConscript meson.build
 
 if HAVE_XF86VIDMODE
 EXTRA_DEFINES_XF86VIDMODE = -DXF86VIDMODE
@@ -97,7 +97,10 @@ libglx_la_SOURCES = \
 	singlepix.c \
 	vertarr.c
 
-libglx_la_LIBADD = $(top_builddir)/src/loader/libloader.la
+libglx_la_LIBADD = \
+	$(top_builddir)/src/loader/libloader.la \
+	$(top_builddir)/src/util/libmesautil.la \
+	$(top_builddir)/src/util/libxmlconfig.la
 
 if HAVE_DRISW
 libglx_la_SOURCES += \

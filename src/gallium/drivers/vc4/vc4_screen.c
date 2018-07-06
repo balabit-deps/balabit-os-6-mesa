@@ -64,7 +64,7 @@ static const struct debug_named_value debug_options[] = {
           "Flush after each draw call" },
         { "always_sync", VC4_DEBUG_ALWAYS_SYNC,
           "Wait for finish after each flush" },
-#if USE_VC4_SIMULATOR
+#ifdef USE_VC4_SIMULATOR
         { "dump", VC4_DEBUG_DUMP,
           "Write a GPU command stream trace file" },
 #endif
@@ -105,7 +105,7 @@ vc4_screen_destroy(struct pipe_screen *pscreen)
         slab_destroy_parent(&screen->transfer_pool);
         free(screen->ro);
 
-#if USE_VC4_SIMULATOR
+#ifdef USE_VC4_SIMULATOR
         vc4_simulator_destroy(screen);
 #endif
 
@@ -113,9 +113,25 @@ vc4_screen_destroy(struct pipe_screen *pscreen)
         ralloc_free(pscreen);
 }
 
+static bool
+vc4_has_feature(struct vc4_screen *screen, uint32_t feature)
+{
+        struct drm_vc4_get_param p = {
+                .param = feature,
+        };
+        int ret = vc4_ioctl(screen->fd, DRM_IOCTL_VC4_GET_PARAM, &p);
+
+        if (ret != 0)
+                return false;
+
+        return p.value;
+}
+
 static int
 vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 {
+        struct vc4_screen *screen = vc4_screen(pscreen);
+
         switch (param) {
                 /* Supported features (boolean caps). */
         case PIPE_CAP_VERTEX_COLOR_CLAMPED:
@@ -124,15 +140,17 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
         case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
         case PIPE_CAP_NPOT_TEXTURES:
         case PIPE_CAP_SHAREABLE_SHADERS:
-        case PIPE_CAP_USER_CONSTANT_BUFFERS:
-        case PIPE_CAP_TEXTURE_SHADOW_MAP:
         case PIPE_CAP_BLEND_EQUATION_SEPARATE:
-        case PIPE_CAP_TWO_SIDED_STENCIL:
         case PIPE_CAP_TEXTURE_MULTISAMPLE:
         case PIPE_CAP_TEXTURE_SWIZZLE:
         case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
         case PIPE_CAP_ALLOW_MAPPED_BUFFERS_DURING_EXECUTION:
+        case PIPE_CAP_TEXTURE_BARRIER:
                 return 1;
+
+        case PIPE_CAP_TILE_RASTER_ORDER:
+                return vc4_has_feature(screen,
+                                       DRM_VC4_PARAM_SUPPORTS_FIXED_RCL_ORDER);
 
                 /* lying for GL 2.0 */
         case PIPE_CAP_OCCLUSION_QUERY:
@@ -178,7 +196,6 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
         case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
         case PIPE_CAP_CONDITIONAL_RENDER:
         case PIPE_CAP_PRIMITIVE_RESTART:
-        case PIPE_CAP_TEXTURE_BARRIER:
         case PIPE_CAP_SM3:
         case PIPE_CAP_INDEP_BLEND_ENABLE:
         case PIPE_CAP_INDEP_BLEND_FUNC:
@@ -258,9 +275,17 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
         case PIPE_CAP_SPARSE_BUFFER_PAGE_SIZE:
         case PIPE_CAP_TGSI_BALLOT:
         case PIPE_CAP_TGSI_TES_LAYER_VIEWPORT:
-	case PIPE_CAP_CAN_BIND_CONST_BUFFER_AS_VERTEX:
+        case PIPE_CAP_CAN_BIND_CONST_BUFFER_AS_VERTEX:
         case PIPE_CAP_POST_DEPTH_COVERAGE:
         case PIPE_CAP_BINDLESS_TEXTURE:
+        case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+        case PIPE_CAP_QUERY_SO_OVERFLOW:
+        case PIPE_CAP_MEMOBJ:
+        case PIPE_CAP_LOAD_CONSTBUF:
+        case PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS:
+        case PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES:
+        case PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET:
+        case PIPE_CAP_CONTEXT_PRIORITY_MASK:
                 return 0;
 
                 /* Stream output. */
@@ -403,8 +428,11 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
                 return 0;
         case PIPE_SHADER_CAP_INTEGERS:
                 return 1;
+        case PIPE_SHADER_CAP_INT64_ATOMICS:
+        case PIPE_SHADER_CAP_FP16:
         case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+        case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
                 return 0;
@@ -415,12 +443,14 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
                 return PIPE_SHADER_IR_NIR;
         case PIPE_SHADER_CAP_SUPPORTED_IRS:
                 return 0;
-	case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
-		return 32;
+        case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
+                return 32;
         case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
         case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
-	case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
+        case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
         case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
                 return 0;
         default:
                 fprintf(stderr, "unknown shader param %d\n", param);
@@ -542,25 +572,30 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
                                   unsigned int *external_only,
                                   int *count)
 {
+        int m, i;
+        uint64_t available_modifiers[] = {
+                DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
+                DRM_FORMAT_MOD_LINEAR,
+        };
+        struct vc4_screen *screen = vc4_screen(pscreen);
+        int num_modifiers = screen->has_tiling_ioctl ? 2 : 1;
+
         if (!modifiers) {
-                *count = 2;
+                *count = num_modifiers;
                 return;
         }
 
-        *count = MIN2(max, 2);
-
+        *count = MIN2(max, num_modifiers);
+        m = screen->has_tiling_ioctl ? 0 : 1;
         /* We support both modifiers (tiled and linear) for all sampler
-         * formats.
+         * formats, but if we don't have the DRM_VC4_GET_TILING ioctl
+         * we shouldn't advertise the tiled formats.
          */
-        modifiers[0] = DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED;
-        if (external_only)
-                external_only[0] = false;
-        if (max < 2)
-                return;
-
-        modifiers[1] = DRM_FORMAT_MOD_LINEAR;
-        if (external_only)
-                external_only[1] = false;
+        for (i = 0; i < *count; i++) {
+                modifiers[i] = available_modifiers[m++];
+                if (external_only)
+                        external_only[i] = false;
+       }
 }
 
 #define PTR_TO_UINT(x) ((unsigned)((intptr_t)(x)))
@@ -573,20 +608,6 @@ static unsigned handle_hash(void *key)
 static int handle_compare(void *key1, void *key2)
 {
     return PTR_TO_UINT(key1) != PTR_TO_UINT(key2);
-}
-
-static bool
-vc4_has_feature(struct vc4_screen *screen, uint32_t feature)
-{
-        struct drm_vc4_get_param p = {
-                .param = feature,
-        };
-        int ret = vc4_ioctl(screen->fd, DRM_IOCTL_VC4_GET_PARAM, &p);
-
-        if (ret != 0)
-                return false;
-
-        return p.value;
 }
 
 static bool
@@ -671,6 +692,8 @@ vc4_screen_create(int fd, struct renderonly *ro)
                 vc4_has_feature(screen, DRM_VC4_PARAM_SUPPORTS_ETC1);
         screen->has_threaded_fs =
                 vc4_has_feature(screen, DRM_VC4_PARAM_SUPPORTS_THREADED_FS);
+        screen->has_madvise =
+                vc4_has_feature(screen, DRM_VC4_PARAM_SUPPORTS_MADVISE);
 
         if (!vc4_get_chip_info(screen))
                 goto fail;
@@ -685,7 +708,7 @@ vc4_screen_create(int fd, struct renderonly *ro)
         if (vc4_debug & VC4_DEBUG_SHADERDB)
                 vc4_debug |= VC4_DEBUG_NORAST;
 
-#if USE_VC4_SIMULATOR
+#ifdef USE_VC4_SIMULATOR
         vc4_simulator_init(screen);
 #endif
 

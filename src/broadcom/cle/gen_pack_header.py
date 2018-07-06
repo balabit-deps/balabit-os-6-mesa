@@ -82,6 +82,11 @@ def safe_name(name):
 
     return name
 
+def prefixed_upper_name(prefix, name):
+    if prefix:
+        name = prefix + "_" + name
+    return safe_name(name).upper()
+
 def num_from_str(num_str):
     if num_str.lower().startswith('0x'):
         return int(num_str, base=16)
@@ -110,6 +115,9 @@ class Field(object):
 
         self.end = self.start + int(attrs["size"]) - 1
         self.type = attrs["type"]
+
+        if self.type == 'bool' and self.start != self.end:
+            print("#error Field {} has bool type but more than one bit of size".format(self.name));
 
         if "prefix" in attrs:
             self.prefix = safe_name(attrs["prefix"]).upper()
@@ -152,22 +160,19 @@ class Field(object):
             type = 'uint32_t'
         elif self.type in self.parser.structs:
             type = 'struct ' + self.parser.gen_prefix(safe_name(self.type))
+        elif self.type in self.parser.enums:
+            type = 'enum ' + self.parser.gen_prefix(safe_name(self.type))
         elif self.type == 'mbo':
             return
         else:
             print("#error unhandled type: %s" % self.type)
+            type = "uint32_t"
 
         print("   %-36s %s%s;" % (type, self.name, dim))
 
-        if len(self.values) > 0 and self.default == None:
-            if self.prefix:
-                prefix = self.prefix + "_"
-            else:
-                prefix = ""
-
         for value in self.values:
-            print("#define %-40s %d" % ((prefix + value.name).replace("__", "_"),
-                                        value.value))
+            name = prefixed_upper_name(self.prefix, value.name)
+            print("#define %-40s %d" % (name, value.value))
 
     def overlaps(self, field):
         return self != field and max(self.start, field.start) <= min(self.end, field.end)
@@ -274,13 +279,18 @@ class Group(object):
                 field_byte_start = (field.start // 8) * 8
                 start -= field_byte_start
                 end -= field_byte_start
+                extra_shift = 0
 
                 if field.type == "mbo":
                     s = "__gen_mbo(%d, %d)" % \
                         (start, end)
                 elif field.type == "address":
+                    extra_shift = (31 - (end - start)) // 8 * 8
                     s = "__gen_address_offset(&values->%s)" % byte.address.name
                 elif field.type == "uint":
+                    s = "__gen_uint(values->%s, %d, %d)" % \
+                        (name, start, end)
+                elif field.type in self.parser.enums:
                     s = "__gen_uint(values->%s, %d, %d)" % \
                         (name, start, end)
                 elif field.type == "int":
@@ -309,8 +319,9 @@ class Group(object):
                     s = None
 
                 if not s == None:
-                    if byte_start - field_byte_start != 0:
-                        s = "%s >> %d" % (s, byte_start - field_byte_start)
+                    shift = byte_start - field_byte_start + extra_shift
+                    if shift:
+                        s = "%s >> %d" % (s, shift)
 
                     if field == byte.fields[-1]:
                         print("%s %s;" % (prefix, s))
@@ -335,6 +346,8 @@ class Group(object):
                     convert = "__gen_unpack_address"
                 elif field.type == "uint":
                     convert = "__gen_unpack_uint"
+                elif field.type in self.parser.enums:
+                    convert = "__gen_unpack_uint"
                 elif field.type == "int":
                     convert = "__gen_unpack_sint"
                 elif field.type == "bool":
@@ -350,7 +363,7 @@ class Group(object):
                     args.append(str(field.fractional_size))
                     convert = "__gen_unpack_sfixed"
                 else:
-                    print("/* unhandled field %s, type %s */\n" % (name, field.type))
+                    print("/* unhandled field %s, type %s */\n" % (field.name, field.type))
                     s = None
 
                 print("   values->%s = %s(%s);" % \
@@ -358,7 +371,7 @@ class Group(object):
 
 class Value(object):
     def __init__(self, attrs):
-        self.name = safe_name(attrs["name"]).upper()
+        self.name = attrs["name"]
         self.value = int(attrs["value"])
 
 class Parser(object):
@@ -370,6 +383,8 @@ class Parser(object):
         self.packet = None
         self.struct = None
         self.structs = {}
+        # Set of enum names we've seen.
+        self.enums = set()
         self.registers = {}
 
     def gen_prefix(self, name):
@@ -423,8 +438,9 @@ class Parser(object):
         elif name == "enum":
             self.values = []
             self.enum = safe_name(attrs["name"])
+            self.enums.add(attrs["name"])
             if "prefix" in attrs:
-                self.prefix = safe_name(attrs["prefix"])
+                self.prefix = attrs["prefix"]
             else:
                 self.prefix= None
         elif name == "value":
@@ -478,13 +494,7 @@ class Parser(object):
 
         print("}\n#endif\n")
 
-    def emit_packet(self):
-        name = self.packet
-
-        assert(self.group.fields[0].name == "opcode")
-        print('#define %-33s %6d' %
-              (name + "_opcode", self.group.fields[0].default))
-
+    def emit_header(self, name):
         default_fields = []
         for field in self.group.fields:
             if not type(field) is Field:
@@ -493,11 +503,18 @@ class Parser(object):
                 continue
             default_fields.append("   .%-35s = %6d" % (field.name, field.default))
 
-        if default_fields:
-            print('#define %-40s\\' % (name + '_header'))
-            print(",  \\\n".join(default_fields))
-            print('')
+        print('#define %-40s\\' % (name + '_header'))
+        print(",  \\\n".join(default_fields))
+        print('')
 
+    def emit_packet(self):
+        name = self.packet
+
+        assert(self.group.fields[0].name == "opcode")
+        print('#define %-33s %6d' %
+              (name + "_opcode", self.group.fields[0].default))
+
+        self.emit_header(name)
         self.emit_template_struct(self.packet, self.group)
         self.emit_pack_function(self.packet, self.group)
         self.emit_unpack_function(self.packet, self.group)
@@ -516,10 +533,8 @@ class Parser(object):
 
     def emit_struct(self):
         name = self.struct
-        # Emit an empty header define so that we can use the CL pack functions
-        # with structs.
-        print('#define ' + name + '_header')
 
+        self.emit_header(name)
         self.emit_template_struct(self.struct, self.group)
         self.emit_pack_function(self.struct, self.group)
         self.emit_unpack_function(self.struct, self.group)
@@ -527,14 +542,14 @@ class Parser(object):
         print('')
 
     def emit_enum(self):
-        print('/* enum %s */' % self.gen_prefix(self.enum))
+        print('enum %s {' % self.gen_prefix(self.enum))
         for value in self.values:
+            name = value.name
             if self.prefix:
-                name = self.prefix + "_" + value.name
-            else:
-                name = value.name
-                print('#define %-36s %6d' % (name.upper(), value.value))
-        print('')
+                name = self.prefix + "_" + name
+            name = safe_name(name).upper()
+            print('        % -36s = %6d,' % (name, value.value))
+        print('};\n')
 
     def parse(self, filename):
         file = open(filename, "rb")

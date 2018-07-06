@@ -41,7 +41,7 @@
 #include "util/u_pack_color.h"
 #include "util/u_viewport.h"
 #include "draw/draw_pipe.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 #include "lp_context.h"
 #include "lp_memory.h"
 #include "lp_scene.h"
@@ -1380,6 +1380,7 @@ lp_setup_begin_query(struct lp_setup_context *setup,
 
    if (!(pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+         pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
          pq->type == PIPE_QUERY_PIPELINE_STATISTICS))
       return;
 
@@ -1430,6 +1431,7 @@ lp_setup_end_query(struct lp_setup_context *setup, struct llvmpipe_query *pq)
 
       if (pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
           pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
           pq->type == PIPE_QUERY_PIPELINE_STATISTICS ||
           pq->type == PIPE_QUERY_TIMESTAMP) {
          if (pq->type == PIPE_QUERY_TIMESTAMP &&
@@ -1466,6 +1468,7 @@ fail:
     */
    if (pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
       pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+      pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
       pq->type == PIPE_QUERY_PIPELINE_STATISTICS) {
       unsigned i;
 

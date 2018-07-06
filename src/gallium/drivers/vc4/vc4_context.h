@@ -243,6 +243,9 @@ struct vc4_job {
          */
         uint32_t bo_space;
 
+        /* Last BO hindex referenced from VC4_PACKET_GEM_HANDLES. */
+        uint32_t last_gem_handle_hindex;
+
         /** @{ Surfaces to submit rendering for. */
         struct pipe_surface *color_read;
         struct pipe_surface *color_write;
@@ -302,6 +305,9 @@ struct vc4_job {
          * the current job.
          */
         uint32_t draw_calls_queued;
+
+        /** Any flags to be passed in drm_vc4_submit_cl.flags. */
+        uint32_t flags;
 
         struct vc4_job_key key;
 };
@@ -398,6 +404,9 @@ struct vc4_rasterizer_state {
                 uint8_t point_size[V3D21_POINT_SIZE_length];
                 uint8_t line_width[V3D21_LINE_WIDTH_length];
         } packed;
+
+        /** Raster order flags to be passed in struct drm_vc4_submit_cl.flags. */
+        uint32_t tile_raster_order_flags;
 };
 
 struct vc4_depth_stencil_alpha_state {

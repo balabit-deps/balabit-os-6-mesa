@@ -43,14 +43,17 @@
 #define UNMAPPED_UNIFORM_LOC ~0u
 
 void
-program_resource_visitor::process(const glsl_type *type, const char *name)
+program_resource_visitor::process(const glsl_type *type, const char *name,
+                                  bool use_std430_as_default)
 {
    assert(type->without_array()->is_record()
           || type->without_array()->is_interface());
 
    unsigned record_array_count = 1;
    char *name_copy = ralloc_strdup(NULL, name);
-   enum glsl_interface_packing packing = type->get_interface_packing();
+
+   enum glsl_interface_packing packing =
+      type->get_internal_ifc_packing(use_std430_as_default);
 
    recursion(type, &name_copy, strlen(name), false, NULL, packing, false,
              record_array_count, NULL);
@@ -58,15 +61,16 @@ program_resource_visitor::process(const glsl_type *type, const char *name)
 }
 
 void
-program_resource_visitor::process(ir_variable *var)
+program_resource_visitor::process(ir_variable *var, bool use_std430_as_default)
 {
    unsigned record_array_count = 1;
    const bool row_major =
       var->data.matrix_layout == GLSL_MATRIX_LAYOUT_ROW_MAJOR;
 
-   const enum glsl_interface_packing packing = var->get_interface_type() ?
-      var->get_interface_type_packing() :
-      var->type->get_interface_packing();
+   enum glsl_interface_packing packing = var->get_interface_type() ?
+      var->get_interface_type()->
+         get_internal_ifc_packing(use_std430_as_default) :
+      var->type->get_internal_ifc_packing(use_std430_as_default);
 
    const glsl_type *t =
       var->data.from_named_ifc_block ? var->get_interface_type() : var->type;
@@ -127,9 +131,6 @@ program_resource_visitor::recursion(const glsl_type *t, char **name,
       for (unsigned i = 0; i < t->length; i++) {
          const char *field = t->fields.structure[i].name;
          size_t new_length = name_length;
-
-         if (t->fields.structure[i].type->is_record())
-            this->visit_field(&t->fields.structure[i]);
 
          if (t->is_interface() && t->fields.structure[i].offset != -1)
             this->set_buffer_offset(t->fields.structure[i].offset);
@@ -212,11 +213,6 @@ program_resource_visitor::recursion(const glsl_type *t, char **name,
 }
 
 void
-program_resource_visitor::visit_field(const glsl_struct_field *)
-{
-}
-
-void
 program_resource_visitor::enter_record(const glsl_type *, const char *, bool,
                                        const enum glsl_interface_packing)
 {
@@ -253,12 +249,14 @@ namespace {
 class count_uniform_size : public program_resource_visitor {
 public:
    count_uniform_size(struct string_to_uint_map *map,
-                      struct string_to_uint_map *hidden_map)
+                      struct string_to_uint_map *hidden_map,
+                      bool use_std430_as_default)
       : num_active_uniforms(0), num_hidden_uniforms(0), num_values(0),
         num_shader_samplers(0), num_shader_images(0),
         num_shader_uniform_components(0), num_shader_subroutines(0),
         is_buffer_block(false), is_shader_storage(false), map(map),
-        hidden_map(hidden_map), current_var(NULL)
+        hidden_map(hidden_map), current_var(NULL),
+        use_std430_as_default(use_std430_as_default)
    {
       /* empty */
    }
@@ -278,9 +276,10 @@ public:
       this->is_shader_storage = var->is_in_shader_storage_block();
       if (var->is_interface_instance())
          program_resource_visitor::process(var->get_interface_type(),
-                                           var->get_interface_type()->name);
+                                           var->get_interface_type()->name,
+                                           use_std430_as_default);
       else
-         program_resource_visitor::process(var);
+         program_resource_visitor::process(var, use_std430_as_default);
    }
 
    /**
@@ -393,9 +392,53 @@ private:
     * Current variable being processed.
     */
    ir_variable *current_var;
+
+   bool use_std430_as_default;
 };
 
 } /* anonymous namespace */
+
+unsigned
+link_calculate_matrix_stride(const glsl_type *matrix, bool row_major,
+                             enum glsl_interface_packing packing)
+{
+   const unsigned N = matrix->is_double() ? 8 : 4;
+   const unsigned items =
+      row_major ? matrix->matrix_columns : matrix->vector_elements;
+
+   assert(items <= 4);
+
+   /* Matrix stride for std430 mat2xY matrices are not rounded up to
+    * vec4 size.
+    *
+    * Section 7.6.2.2 "Standard Uniform Block Layout" of the OpenGL 4.3 spec
+    * says:
+    *
+    *    2. If the member is a two- or four-component vector with components
+    *       consuming N basic machine units, the base alignment is 2N or 4N,
+    *       respectively.
+    *    ...
+    *    4. If the member is an array of scalars or vectors, the base
+    *       alignment and array stride are set to match the base alignment of
+    *       a single array element, according to rules (1), (2), and (3), and
+    *       rounded up to the base alignment of a vec4.
+    *    ...
+    *    7. If the member is a row-major matrix with C columns and R rows, the
+    *       matrix is stored identically to an array of R row vectors with C
+    *       components each, according to rule (4).
+    *    ...
+    *
+    *    When using the std430 storage layout, shader storage blocks will be
+    *    laid out in buffer storage identically to uniform and shader storage
+    *    blocks using the std140 layout, except that the base alignment and
+    *    stride of arrays of scalars and vectors in rule 4 and of structures
+    *    in rule 9 are not rounded up a multiple of the base alignment of a
+    *    vec4.
+    */
+   return packing == GLSL_INTERFACE_PACKING_STD430
+      ? (items < 3 ? items * N : glsl_align(items * N, 16))
+      : glsl_align(items * N, 16);
+}
 
 /**
  * Class to help parcel out pieces of backing storage to uniforms
@@ -417,8 +460,10 @@ public:
    parcel_out_uniform_storage(struct gl_shader_program *prog,
                               struct string_to_uint_map *map,
                               struct gl_uniform_storage *uniforms,
-                              union gl_constant_value *values)
-      : prog(prog), map(map), uniforms(uniforms), values(values),
+                              union gl_constant_value *values,
+                              bool use_std430_as_default)
+      : prog(prog), map(map), uniforms(uniforms),
+        use_std430_as_default(use_std430_as_default), values(values),
         bindless_targets(NULL), bindless_access(NULL)
    {
    }
@@ -498,7 +543,8 @@ public:
          if (var->is_interface_instance()) {
             ubo_byte_offset = 0;
             process(var->get_interface_type(),
-                    var->get_interface_type()->name);
+                    var->get_interface_type()->name,
+                    use_std430_as_default);
          } else {
             const struct gl_uniform_block *const block =
                &blks[buffer_block_index];
@@ -509,7 +555,7 @@ public:
                &block->Uniforms[var->data.location];
 
             ubo_byte_offset = ubo_var->Offset;
-            process(var);
+            process(var, use_std430_as_default);
          }
       } else {
          /* Store any explicit location and reset data location so we can
@@ -518,7 +564,7 @@ public:
          this->explicit_location = current_var->data.location;
          current_var->data.location = -1;
 
-         process(var);
+         process(var, use_std430_as_default);
       }
       delete this->record_next_sampler;
       delete this->record_next_bindless_sampler;
@@ -852,17 +898,10 @@ private:
          }
 
          if (type->without_array()->is_matrix()) {
-            const glsl_type *matrix = type->without_array();
-            const unsigned N = matrix->is_double() ? 8 : 4;
-            const unsigned items =
-               row_major ? matrix->matrix_columns : matrix->vector_elements;
-
-            assert(items <= 4);
-            if (packing == GLSL_INTERFACE_PACKING_STD430)
-               this->uniforms[id].matrix_stride = items < 3 ? items * N :
-                                                    glsl_align(items * N, 16);
-            else
-               this->uniforms[id].matrix_stride = glsl_align(items * N, 16);
+            this->uniforms[id].matrix_stride =
+               link_calculate_matrix_stride(type->without_array(),
+                                            row_major,
+                                            packing);
             this->uniforms[id].row_major = row_major;
          } else {
             this->uniforms[id].matrix_stride = 0;
@@ -895,6 +934,8 @@ private:
    unsigned next_image;
    unsigned next_bindless_image;
    unsigned next_subroutine;
+
+   bool use_std430_as_default;
 
    /**
     * Field counter is used to take care that uniform structures
@@ -1324,6 +1365,9 @@ link_assign_uniform_storage(struct gl_context *ctx,
                                                  prog->data->NumUniformStorage);
       data = rzalloc_array(prog->data->UniformStorage,
                            union gl_constant_value, num_data_slots);
+      prog->data->UniformDataDefaults =
+         rzalloc_array(prog->data->UniformStorage,
+                       union gl_constant_value, num_data_slots);
    } else {
       data = prog->data->UniformDataSlots;
    }
@@ -1333,7 +1377,8 @@ link_assign_uniform_storage(struct gl_context *ctx,
 #endif
 
    parcel_out_uniform_storage parcel(prog, prog->UniformHash,
-                                     prog->data->UniformStorage, data);
+                                     prog->data->UniformStorage, data,
+                                     ctx->Const.UseSTD430AsDefaultPacking);
 
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
       struct gl_linked_shader *shader = prog->_LinkedShaders[i];
@@ -1427,7 +1472,8 @@ link_assign_uniform_locations(struct gl_shader_program *prog,
     * glGetUniformLocation.
     */
    struct string_to_uint_map *hiddenUniforms = new string_to_uint_map;
-   count_uniform_size uniform_size(prog->UniformHash, hiddenUniforms);
+   count_uniform_size uniform_size(prog->UniformHash, hiddenUniforms,
+                                   ctx->Const.UseSTD430AsDefaultPacking);
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
       struct gl_linked_shader *sh = prog->_LinkedShaders[i];
 

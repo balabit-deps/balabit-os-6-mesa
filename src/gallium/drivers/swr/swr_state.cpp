@@ -531,7 +531,7 @@ swr_create_vertex_elements_state(struct pipe_context *pipe,
             ? ComponentControl::StoreSrc
             : ComponentControl::Store1Fp;
          velems->fsState.layout[i].ComponentPacking = ComponentEnable::XYZW;
-         velems->fsState.layout[i].InstanceDataStepRate =
+         velems->fsState.layout[i].InstanceAdvancementState =
             attribs[i].instance_divisor;
 
          /* Calculate the pitch of each stream */
@@ -795,7 +795,7 @@ swr_update_texture_state(struct swr_context *ctx,
 
          jit_tex->width = res->width0;
          jit_tex->height = res->height0;
-         jit_tex->base_ptr = swr->pBaseAddress;
+         jit_tex->base_ptr = (uint8_t*)swr->xpBaseAddress;
          if (view->target != PIPE_BUFFER) {
             jit_tex->first_level = view->u.tex.first_level;
             jit_tex->last_level = view->u.tex.last_level;
@@ -902,7 +902,7 @@ swr_change_rt(struct swr_context *ctx,
    struct SWR_SURFACE_STATE *rt = &pDC->renderTargets[attachment];
 
    /* Do nothing if the render target hasn't changed */
-   if ((!sf || !sf->texture) && rt->pBaseAddress == nullptr)
+   if ((!sf || !sf->texture) && (void*)(rt->xpBaseAddress) == nullptr)
       return false;
 
    /* Deal with disabling RT up front */
@@ -918,12 +918,12 @@ swr_change_rt(struct swr_context *ctx,
    const SWR_SURFACE_STATE *swr_surface = &swr->swr;
    SWR_FORMAT fmt = mesa_to_swr_format(sf->format);
 
-   if (attachment == SWR_ATTACHMENT_STENCIL && swr->secondary.pBaseAddress) {
+   if (attachment == SWR_ATTACHMENT_STENCIL && swr->secondary.xpBaseAddress) {
       swr_surface = &swr->secondary;
       fmt = swr_surface->format;
    }
 
-   if (rt->pBaseAddress == swr_surface->pBaseAddress &&
+   if (rt->xpBaseAddress == swr_surface->xpBaseAddress &&
        rt->format == fmt &&
        rt->lod == sf->u.tex.level &&
        rt->arrayIndex == sf->u.tex.first_layer)
@@ -932,7 +932,7 @@ swr_change_rt(struct swr_context *ctx,
    bool need_fence = false;
 
    /* StoreTile for changed target */
-   if (rt->pBaseAddress) {
+   if (rt->xpBaseAddress) {
       /* If changing attachment to a new target, mark tiles as
        * INVALID so they are reloaded from surface. */
       swr_store_render_target(&ctx->pipe, attachment, SWR_TILE_INVALID);
@@ -1012,8 +1012,8 @@ swr_user_vbuf_range(const struct pipe_draw_info *info,
       *size = elems * vb->stride;
    } else if (vb->stride) {
       elems = info->max_index - info->min_index + 1;
-      *totelems = info->max_index + 1;
-      *base = info->min_index * vb->stride;
+      *totelems = (info->max_index + info->index_bias) + 1;
+      *base = (info->min_index + info->index_bias) * vb->stride;
       *size = elems * vb->stride;
    } else {
       *totelems = 1;
@@ -1074,8 +1074,7 @@ swr_update_derived(struct pipe_context *pipe,
    }
 
    /* Update screen->pipe to current pipe context. */
-   if (screen->pipe != pipe)
-      screen->pipe = pipe;
+   screen->pipe = pipe;
 
    /* Any state that requires dirty flags to be re-triggered sets this mask */
    /* For example, user_buffer vertex and index buffers. */
@@ -1202,20 +1201,7 @@ swr_update_derived(struct pipe_context *pipe,
       rastState->depthClipEnable = rasterizer->depth_clip;
       rastState->clipHalfZ = rasterizer->clip_halfz;
 
-      rastState->clipDistanceMask =
-         ctx->vs->info.base.num_written_clipdistance ?
-         ctx->vs->info.base.clipdist_writemask & rasterizer->clip_plane_enable :
-         rasterizer->clip_plane_enable;
-
-      rastState->cullDistanceMask =
-         ctx->vs->info.base.culldist_writemask << ctx->vs->info.base.num_written_clipdistance;
-
       ctx->api.pfnSwrSetRastState(ctx->swrContext, rastState);
-   }
-
-   /* Scissor */
-   if (ctx->dirty & SWR_NEW_SCISSOR) {
-      ctx->api.pfnSwrSetScissorRects(ctx->swrContext, 1, &ctx->swr_scissor);
    }
 
    /* Viewport */
@@ -1258,18 +1244,26 @@ swr_update_derived(struct pipe_context *pipe,
       ctx->api.pfnSwrSetViewports(ctx->swrContext, 1, vp, vpm);
    }
 
-   /* Set vertex & index buffers
-    * (using draw info if called by swr_draw_vbo)
-    * If indexed draw, revalidate since index buffer comes from
-    * pipe_draw_info.
-    */
-   if (ctx->dirty & SWR_NEW_VERTEX ||
-      (p_draw_info && p_draw_info->index_size)) {
+   /* When called from swr_clear (p_draw_info = null), render targets,
+    * rasterState and viewports (dependent on render targets) are the only
+    * necessary validation.  Defer remaining validation by setting
+    * post_update_dirty_flags and clear all dirty flags.  BackendState is
+    * still unconditionally validated below */
+   if (!p_draw_info) {
+      post_update_dirty_flags = ctx->dirty & ~(SWR_NEW_FRAMEBUFFER |
+                                               SWR_NEW_RASTERIZER |
+                                               SWR_NEW_VIEWPORT);
+      ctx->dirty = 0;
+   }
 
-      /* If being called by swr_draw_vbo, copy draw details */
-      struct pipe_draw_info info = {0};
-      if (p_draw_info)
-         info = *p_draw_info;
+   /* Scissor */
+   if (ctx->dirty & SWR_NEW_SCISSOR) {
+      ctx->api.pfnSwrSetScissorRects(ctx->swrContext, 1, &ctx->swr_scissor);
+   }
+
+   /* Set vertex & index buffers */
+   if (ctx->dirty & SWR_NEW_VERTEX) {
+      const struct pipe_draw_info &info = *p_draw_info;
 
       /* vertex buffers */
       SWR_VERTEX_BUFFER_STATE swrVertexBuffers[PIPE_MAX_ATTRIBS];
@@ -1310,7 +1304,7 @@ swr_update_derived(struct pipe_context *pipe,
             uint32_t base;
             swr_user_vbuf_range(&info, ctx->velems, vb, i, &elems, &base, &size);
             partial_inbounds = 0;
-            min_vertex_index = info.min_index;
+            min_vertex_index = info.min_index + info.index_bias;
 
             size = AlignUp(size, 4);
             /* If size of client memory copy is too large, don't copy. The
@@ -1809,6 +1803,17 @@ swr_update_derived(struct pipe_context *pipe,
    backendState.readRenderTargetArrayIndex = pLastFE->writes_layer;
    backendState.readViewportArrayIndex = pLastFE->writes_viewport_index;
    backendState.vertexAttribOffset = VERTEX_ATTRIB_START_SLOT; // TODO: optimize
+
+   backendState.clipDistanceMask =
+      ctx->vs->info.base.num_written_clipdistance ?
+      ctx->vs->info.base.clipdist_writemask & ctx->rasterizer->clip_plane_enable :
+      ctx->rasterizer->clip_plane_enable;
+
+   backendState.cullDistanceMask =
+      ctx->vs->info.base.culldist_writemask << ctx->vs->info.base.num_written_clipdistance;
+
+   // Assume old layout of SGV, POSITION, CLIPCULL, ATTRIB
+   backendState.vertexClipCullOffset = backendState.vertexAttribOffset - 2;
 
    ctx->api.pfnSwrSetBackendState(ctx->swrContext, &backendState);
 

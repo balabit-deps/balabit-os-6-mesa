@@ -28,6 +28,7 @@
 
 #include "common/gen_l3_config.h"
 #include "common/gen_sample_positions.h"
+#include "vk_util.h"
 #include "vk_format_info.h"
 
 static uint32_t
@@ -137,7 +138,7 @@ emit_vertex_input(struct anv_pipeline *pipeline,
       struct GENX(VERTEX_ELEMENT_STATE) element = {
          .VertexBufferIndex = desc->binding,
          .Valid = true,
-         .SourceElementFormat = format,
+         .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) format,
          .EdgeFlagEnable = false,
          .SourceElementOffset = desc->offset,
          .Component0Control = vertex_element_comp_control(format, 0),
@@ -183,7 +184,7 @@ emit_vertex_input(struct anv_pipeline *pipeline,
       struct GENX(VERTEX_ELEMENT_STATE) element = {
          .VertexBufferIndex = ANV_SVGS_VB_INDEX,
          .Valid = true,
-         .SourceElementFormat = ISL_FORMAT_R32G32_UINT,
+         .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32G32_UINT,
          .Component0Control = base_ctrl,
          .Component1Control = base_ctrl,
 #if GEN_GEN >= 8
@@ -213,7 +214,7 @@ emit_vertex_input(struct anv_pipeline *pipeline,
       struct GENX(VERTEX_ELEMENT_STATE) element = {
          .VertexBufferIndex = ANV_DRAWID_VB_INDEX,
          .Valid = true,
-         .SourceElementFormat = ISL_FORMAT_R32_UINT,
+         .SourceElementFormat = (enum GENX(SURFACE_FORMAT)) ISL_FORMAT_R32_UINT,
          .Component0Control = VFCOMP_STORE_SRC,
          .Component1Control = VFCOMP_STORE_0,
          .Component2Control = VFCOMP_STORE_0,
@@ -281,7 +282,7 @@ genX(emit_urb_setup)(struct anv_device *device, struct anv_batch *batch,
    }
 }
 
-static inline void
+static void
 emit_urb_setup(struct anv_pipeline *pipeline)
 {
    unsigned entry_size[4];
@@ -378,8 +379,8 @@ emit_3dstate_sbe(struct anv_pipeline *pipeline)
          /* We have to subtract two slots to accout for the URB entry output
           * read offset in the VS and GS stages.
           */
-         assert(slot >= 2);
          const int source_attr = slot - 2 * urb_entry_read_offset;
+         assert(source_attr >= 0 && source_attr < 32);
          max_source_attr = MAX2(max_source_attr, source_attr);
          swiz.Attribute[input_index].SourceAttribute = source_attr;
       }
@@ -1077,19 +1078,25 @@ emit_3dstate_streamout(struct anv_pipeline *pipeline,
    }
 }
 
-static inline uint32_t
+static uint32_t
 get_sampler_count(const struct anv_shader_bin *bin)
 {
-   return DIV_ROUND_UP(bin->bind_map.sampler_count, 4);
+   uint32_t count_by_4 = DIV_ROUND_UP(bin->bind_map.sampler_count, 4);
+
+   /* We can potentially have way more than 32 samplers and that's ok.
+    * However, the 3DSTATE_XS packets only have 3 bits to specify how
+    * many to pre-fetch and all values above 4 are marked reserved.
+    */
+   return MIN2(count_by_4, 4);
 }
 
-static inline uint32_t
+static uint32_t
 get_binding_table_entry_count(const struct anv_shader_bin *bin)
 {
    return DIV_ROUND_UP(bin->bind_map.surface_count, 32);
 }
 
-static inline struct anv_address
+static struct anv_address
 get_scratch_address(struct anv_pipeline *pipeline,
                     gl_shader_stage stage,
                     const struct anv_shader_bin *bin)
@@ -1102,26 +1109,10 @@ get_scratch_address(struct anv_pipeline *pipeline,
    };
 }
 
-static inline uint32_t
+static uint32_t
 get_scratch_space(const struct anv_shader_bin *bin)
 {
    return ffs(bin->prog_data->total_scratch / 2048);
-}
-
-static inline uint32_t
-get_urb_output_offset()
-{
-   /* Skip the VUE header and position slots */
-   return 1;
-}
-
-static inline uint32_t
-get_urb_output_length(const struct anv_shader_bin *bin)
-{
-   const struct brw_vue_prog_data *prog_data =
-      (const struct brw_vue_prog_data *)bin->prog_data;
-
-   return (prog_data->vue_map.num_slots + 1) / 2 - get_urb_output_offset();
 }
 
 static void
@@ -1160,9 +1151,6 @@ emit_3dstate_vs(struct anv_pipeline *pipeline)
          vs_prog_data->base.base.dispatch_grf_start_reg;
 
 #if GEN_GEN >= 8
-      vs.VertexURBEntryOutputReadOffset = get_urb_output_offset();
-      vs.VertexURBEntryOutputLength     = get_urb_output_length(vs_bin);
-
       vs.UserClipDistanceClipTestEnableBitmask =
          vs_prog_data->base.clip_distance_mask;
       vs.UserClipDistanceCullTestEnableBitmask =
@@ -1176,7 +1164,8 @@ emit_3dstate_vs(struct anv_pipeline *pipeline)
 }
 
 static void
-emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline)
+emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline,
+                      const VkPipelineTessellationStateCreateInfo *tess_info)
 {
    if (!anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL)) {
       anv_batch_emit(&pipeline->batch, GENX(3DSTATE_HS), hs);
@@ -1215,9 +1204,29 @@ emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline)
          get_scratch_address(pipeline, MESA_SHADER_TESS_CTRL, tcs_bin);
    }
 
+   const VkPipelineTessellationDomainOriginStateCreateInfoKHR *domain_origin_state =
+      tess_info ? vk_find_struct_const(tess_info, PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO_KHR) : NULL;
+
+   VkTessellationDomainOriginKHR uv_origin =
+      domain_origin_state ? domain_origin_state->domainOrigin :
+                            VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT_KHR;
+
    anv_batch_emit(&pipeline->batch, GENX(3DSTATE_TE), te) {
       te.Partitioning = tes_prog_data->partitioning;
-      te.OutputTopology = tes_prog_data->output_topology;
+
+      if (uv_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT_KHR) {
+         te.OutputTopology = tes_prog_data->output_topology;
+      } else {
+         /* When the origin is upper-left, we have to flip the winding order */
+         if (tes_prog_data->output_topology == OUTPUT_TRI_CCW) {
+            te.OutputTopology = OUTPUT_TRI_CW;
+         } else if (tes_prog_data->output_topology == OUTPUT_TRI_CW) {
+            te.OutputTopology = OUTPUT_TRI_CCW;
+         } else {
+            te.OutputTopology = tes_prog_data->output_topology;
+         }
+      }
+
       te.TEDomain = tes_prog_data->domain;
       te.TEEnable = true;
       te.MaximumTessellationFactorOdd = 63.0;
@@ -1242,10 +1251,6 @@ emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline)
          tes_prog_data->base.base.dispatch_grf_start_reg;
 
 #if GEN_GEN >= 8
-      ds.VertexURBEntryOutputReadOffset = 1;
-      ds.VertexURBEntryOutputLength =
-         (tes_prog_data->base.vue_map.num_slots + 1) / 2 - 1;
-
       ds.DispatchMode =
          tes_prog_data->base.dispatch_mode == DISPATCH_MODE_SIMD8 ?
             DISPATCH_MODE_SIMD8_SINGLE_PATCH :
@@ -1318,9 +1323,6 @@ emit_3dstate_gs(struct anv_pipeline *pipeline)
          gs_prog_data->base.base.dispatch_grf_start_reg;
 
 #if GEN_GEN >= 8
-      gs.VertexURBEntryOutputReadOffset = get_urb_output_offset();
-      gs.VertexURBEntryOutputLength     = get_urb_output_length(gs_bin);
-
       gs.UserClipDistanceClipTestEnableBitmask =
          gs_prog_data->base.clip_distance_mask;
       gs.UserClipDistanceCullTestEnableBitmask =
@@ -1333,8 +1335,9 @@ emit_3dstate_gs(struct anv_pipeline *pipeline)
    }
 }
 
-static inline bool
-has_color_buffer_write_enabled(const struct anv_pipeline *pipeline)
+static bool
+has_color_buffer_write_enabled(const struct anv_pipeline *pipeline,
+                               const VkPipelineColorBlendStateCreateInfo *blend)
 {
    const struct anv_shader_bin *shader_bin =
       pipeline->shaders[MESA_SHADER_FRAGMENT];
@@ -1343,10 +1346,15 @@ has_color_buffer_write_enabled(const struct anv_pipeline *pipeline)
 
    const struct anv_pipeline_bind_map *bind_map = &shader_bin->bind_map;
    for (int i = 0; i < bind_map->surface_count; i++) {
-      if (bind_map->surface_to_descriptor[i].set !=
-          ANV_DESCRIPTOR_SET_COLOR_ATTACHMENTS)
+      struct anv_pipeline_binding *binding = &bind_map->surface_to_descriptor[i];
+
+      if (binding->set != ANV_DESCRIPTOR_SET_COLOR_ATTACHMENTS)
          continue;
-      if (bind_map->surface_to_descriptor[i].index != UINT8_MAX)
+
+      if (binding->index == UINT32_MAX)
+         continue;
+
+      if (blend->pAttachments[binding->index].colorWriteMask != 0)
          return true;
    }
 
@@ -1355,6 +1363,7 @@ has_color_buffer_write_enabled(const struct anv_pipeline *pipeline)
 
 static void
 emit_3dstate_wm(struct anv_pipeline *pipeline, struct anv_subpass *subpass,
+                const VkPipelineColorBlendStateCreateInfo *blend,
                 const VkPipelineMultisampleStateCreateInfo *multisample)
 {
    const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
@@ -1399,7 +1408,7 @@ emit_3dstate_wm(struct anv_pipeline *pipeline, struct anv_subpass *subpass,
          if (wm.PixelShaderComputedDepthMode != PSCDEPTH_OFF ||
              wm_prog_data->has_side_effects ||
              wm.PixelShaderKillsPixel ||
-             has_color_buffer_write_enabled(pipeline))
+             has_color_buffer_write_enabled(pipeline, blend))
             wm.ThreadDispatchEnable = true;
 
          if (samples > 1) {
@@ -1418,7 +1427,7 @@ emit_3dstate_wm(struct anv_pipeline *pipeline, struct anv_subpass *subpass,
    }
 }
 
-static inline bool
+UNUSED static bool
 is_dual_src_blend_factor(VkBlendFactor factor)
 {
    return factor == VK_BLEND_FACTOR_SRC1_COLOR ||
@@ -1484,7 +1493,8 @@ emit_3dstate_ps(struct anv_pipeline *pipeline,
       ps.VectorMaskEnable           = true;
       ps.SamplerCount               = get_sampler_count(fs_bin);
       ps.BindingTableEntryCount     = get_binding_table_entry_count(fs_bin);
-      ps.PushConstantEnable         = wm_prog_data->base.nr_params > 0;
+      ps.PushConstantEnable         = wm_prog_data->base.nr_params > 0 ||
+                                      wm_prog_data->base.ubo_ranges[0].length;
       ps.PositionXYOffsetSelect     = wm_prog_data->uses_pos_offset ?
                                       POSOFFSET_SAMPLE: POSOFFSET_NONE;
 #if GEN_GEN < 8
@@ -1523,7 +1533,8 @@ emit_3dstate_ps(struct anv_pipeline *pipeline,
 #if GEN_GEN >= 8
 static void
 emit_3dstate_ps_extra(struct anv_pipeline *pipeline,
-                      struct anv_subpass *subpass)
+                      struct anv_subpass *subpass,
+                      const VkPipelineColorBlendStateCreateInfo *blend)
 {
    const struct brw_wm_prog_data *wm_prog_data = get_wm_prog_data(pipeline);
 
@@ -1578,7 +1589,7 @@ emit_3dstate_ps_extra(struct anv_pipeline *pipeline,
        * attachments, we need to force-enable here.
        */
       if ((wm_prog_data->has_side_effects || wm_prog_data->uses_kill) &&
-          !has_color_buffer_write_enabled(pipeline))
+          !has_color_buffer_write_enabled(pipeline, blend))
          ps.PixelShaderHasUAV = true;
 
 #if GEN_GEN >= 9
@@ -1700,18 +1711,19 @@ genX(graphics_pipeline_create)(
     * whole fixed function pipeline" means to emit a PIPE_CONTROL with the "CS
     * Stall" bit set.
     */
-   if (!brw->is_haswell && !brw->is_baytrail)
+   if (!device->info.is_haswell && !device->info.is_baytrail)
       gen7_emit_vs_workaround_flush(brw);
 #endif
 
    emit_3dstate_vs(pipeline);
-   emit_3dstate_hs_te_ds(pipeline);
+   emit_3dstate_hs_te_ds(pipeline, pCreateInfo->pTessellationState);
    emit_3dstate_gs(pipeline);
    emit_3dstate_sbe(pipeline);
-   emit_3dstate_wm(pipeline, subpass, pCreateInfo->pMultisampleState);
+   emit_3dstate_wm(pipeline, subpass, pCreateInfo->pColorBlendState,
+                   pCreateInfo->pMultisampleState);
    emit_3dstate_ps(pipeline, pCreateInfo->pColorBlendState);
 #if GEN_GEN >= 8
-   emit_3dstate_ps_extra(pipeline, subpass);
+   emit_3dstate_ps_extra(pipeline, subpass, pCreateInfo->pColorBlendState);
    emit_3dstate_vf_topology(pipeline);
 #endif
    emit_3dstate_vf_statistics(pipeline);

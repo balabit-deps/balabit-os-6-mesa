@@ -122,7 +122,8 @@ target_triplet = @target@
 @HAVE_PLATFORM_DRM_TRUE@@NEED_GALLIUM_VL_TRUE@@NEED_GALLIUM_VL_WINSYS_TRUE@am__append_13 = $(VL_WINSYS_DRM_SOURCES)
 subdir = src/gallium/auxiliary
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
-am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_gnu_make.m4 \
+am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_compile_flag.m4 \
+	$(top_srcdir)/m4/ax_check_gnu_make.m4 \
 	$(top_srcdir)/m4/ax_check_python_mako_module.m4 \
 	$(top_srcdir)/m4/ax_gcc_builtin.m4 \
 	$(top_srcdir)/m4/ax_gcc_func_attribute.m4 \
@@ -175,36 +176,36 @@ am__libgallium_la_SOURCES_DIST = cso_cache/cso_cache.c \
 	os/os_memory_aligned.h os/os_memory_debug.h \
 	os/os_memory_stdc.h os/os_memory.h os/os_misc.c os/os_misc.h \
 	os/os_mman.h os/os_process.c os/os_process.h os/os_thread.h \
-	os/os_time.c os/os_time.h pipebuffer/pb_buffer_fenced.c \
-	pipebuffer/pb_buffer_fenced.h pipebuffer/pb_buffer.h \
-	pipebuffer/pb_buffer_malloc.c pipebuffer/pb_bufmgr_alt.c \
-	pipebuffer/pb_bufmgr_cache.c pipebuffer/pb_bufmgr_debug.c \
-	pipebuffer/pb_bufmgr.h pipebuffer/pb_bufmgr_mm.c \
-	pipebuffer/pb_bufmgr_ondemand.c pipebuffer/pb_bufmgr_pool.c \
-	pipebuffer/pb_bufmgr_slab.c pipebuffer/pb_cache.c \
-	pipebuffer/pb_cache.h pipebuffer/pb_slab.c \
-	pipebuffer/pb_slab.h pipebuffer/pb_validate.c \
-	pipebuffer/pb_validate.h postprocess/filters.h \
-	postprocess/postprocess.h postprocess/pp_celshade.c \
-	postprocess/pp_celshade.h postprocess/pp_colors.c \
-	postprocess/pp_colors.h postprocess/pp_filters.h \
-	postprocess/pp_init.c postprocess/pp_mlaa_areamap.h \
-	postprocess/pp_mlaa.c postprocess/pp_mlaa.h \
-	postprocess/pp_private.h postprocess/pp_program.c \
-	postprocess/pp_run.c rbug/rbug_connection.c \
-	rbug/rbug_connection.h rbug/rbug_context.c rbug/rbug_context.h \
-	rbug/rbug_core.c rbug/rbug_core.h rbug/rbug_demarshal.c \
-	rbug/rbug.h rbug/rbug_internal.h rbug/rbug_proto.h \
-	rbug/rbug_shader.c rbug/rbug_shader.h rbug/rbug_texture.c \
-	rbug/rbug_texture.h rtasm/rtasm_cpu.c rtasm/rtasm_cpu.h \
-	rtasm/rtasm_execmem.c rtasm/rtasm_execmem.h \
-	rtasm/rtasm_x86sse.c rtasm/rtasm_x86sse.h tgsi/tgsi_aa_point.c \
-	tgsi/tgsi_aa_point.h tgsi/tgsi_build.c tgsi/tgsi_build.h \
-	tgsi/tgsi_dump.c tgsi/tgsi_dump.h tgsi/tgsi_exec.c \
-	tgsi/tgsi_exec.h tgsi/tgsi_emulate.c tgsi/tgsi_emulate.h \
-	tgsi/tgsi_from_mesa.c tgsi/tgsi_from_mesa.h tgsi/tgsi_info.c \
-	tgsi/tgsi_info.h tgsi/tgsi_iterate.c tgsi/tgsi_iterate.h \
-	tgsi/tgsi_lowering.c tgsi/tgsi_lowering.h \
+	pipebuffer/pb_buffer_fenced.c pipebuffer/pb_buffer_fenced.h \
+	pipebuffer/pb_buffer.h pipebuffer/pb_buffer_malloc.c \
+	pipebuffer/pb_bufmgr_alt.c pipebuffer/pb_bufmgr_cache.c \
+	pipebuffer/pb_bufmgr_debug.c pipebuffer/pb_bufmgr.h \
+	pipebuffer/pb_bufmgr_mm.c pipebuffer/pb_bufmgr_ondemand.c \
+	pipebuffer/pb_bufmgr_pool.c pipebuffer/pb_bufmgr_slab.c \
+	pipebuffer/pb_cache.c pipebuffer/pb_cache.h \
+	pipebuffer/pb_slab.c pipebuffer/pb_slab.h \
+	pipebuffer/pb_validate.c pipebuffer/pb_validate.h \
+	postprocess/filters.h postprocess/postprocess.h \
+	postprocess/pp_celshade.c postprocess/pp_celshade.h \
+	postprocess/pp_colors.c postprocess/pp_colors.h \
+	postprocess/pp_filters.h postprocess/pp_init.c \
+	postprocess/pp_mlaa_areamap.h postprocess/pp_mlaa.c \
+	postprocess/pp_mlaa.h postprocess/pp_private.h \
+	postprocess/pp_program.c postprocess/pp_run.c \
+	rbug/rbug_connection.c rbug/rbug_connection.h \
+	rbug/rbug_context.c rbug/rbug_context.h rbug/rbug_core.c \
+	rbug/rbug_core.h rbug/rbug_demarshal.c rbug/rbug.h \
+	rbug/rbug_internal.h rbug/rbug_proto.h rbug/rbug_shader.c \
+	rbug/rbug_shader.h rbug/rbug_texture.c rbug/rbug_texture.h \
+	rtasm/rtasm_cpu.c rtasm/rtasm_cpu.h rtasm/rtasm_execmem.c \
+	rtasm/rtasm_execmem.h rtasm/rtasm_x86sse.c \
+	rtasm/rtasm_x86sse.h tgsi/tgsi_aa_point.c tgsi/tgsi_aa_point.h \
+	tgsi/tgsi_build.c tgsi/tgsi_build.h tgsi/tgsi_dump.c \
+	tgsi/tgsi_dump.h tgsi/tgsi_exec.c tgsi/tgsi_exec.h \
+	tgsi/tgsi_emulate.c tgsi/tgsi_emulate.h tgsi/tgsi_from_mesa.c \
+	tgsi/tgsi_from_mesa.h tgsi/tgsi_info.c tgsi/tgsi_info.h \
+	tgsi/tgsi_info_opcodes.h tgsi/tgsi_iterate.c \
+	tgsi/tgsi_iterate.h tgsi/tgsi_lowering.c tgsi/tgsi_lowering.h \
 	tgsi/tgsi_opcode_tmp.h tgsi/tgsi_parse.c tgsi/tgsi_parse.h \
 	tgsi/tgsi_point_sprite.c tgsi/tgsi_point_sprite.h \
 	tgsi/tgsi_sanity.c tgsi/tgsi_sanity.h tgsi/tgsi_scan.c \
@@ -215,23 +216,24 @@ am__libgallium_la_SOURCES_DIST = cso_cache/cso_cache.c \
 	tgsi/tgsi_util.c tgsi/tgsi_util.h translate/translate.c \
 	translate/translate.h translate/translate_cache.c \
 	translate/translate_cache.h translate/translate_generic.c \
-	translate/translate_sse.c util/dbghelp.h util/u_bitcast.h \
-	util/u_bitmask.c util/u_bitmask.h util/u_blend.h util/u_blit.c \
-	util/u_blit.h util/u_blitter.c util/u_blitter.h util/u_box.h \
-	util/u_cache.c util/u_cache.h util/u_cpu_detect.c \
-	util/u_cpu_detect.h util/u_debug.c util/u_debug.h \
-	util/u_debug_describe.c util/u_debug_describe.h \
-	util/u_debug_flush.c util/u_debug_flush.h util/u_debug_image.c \
-	util/u_debug_image.h util/u_debug_memory.c \
-	util/u_debug_refcnt.c util/u_debug_refcnt.h \
-	util/u_debug_stack.c util/u_debug_stack.h \
-	util/u_debug_symbol.c util/u_debug_symbol.h \
-	util/u_dirty_flags.h util/u_dirty_surfaces.h util/u_dl.c \
-	util/u_dl.h util/u_draw.c util/u_draw.h util/u_draw_quad.c \
-	util/u_draw_quad.h util/u_dual_blend.h util/u_dump_defines.c \
-	util/u_dump.h util/u_dump_state.c util/u_fifo.h \
-	util/u_format.c util/u_format.h util/u_format_etc.c \
-	util/u_format_etc.h util/u_format_latc.c util/u_format_latc.h \
+	translate/translate_sse.c util/dbghelp.h util/u_async_debug.h \
+	util/u_async_debug.c util/u_bitcast.h util/u_bitmask.c \
+	util/u_bitmask.h util/u_blend.h util/u_blit.c util/u_blit.h \
+	util/u_blitter.c util/u_blitter.h util/u_box.h util/u_cache.c \
+	util/u_cache.h util/u_cpu_detect.c util/u_cpu_detect.h \
+	util/u_debug.c util/u_debug.h util/u_debug_describe.c \
+	util/u_debug_describe.h util/u_debug_flush.c \
+	util/u_debug_flush.h util/u_debug_image.c util/u_debug_image.h \
+	util/u_debug_memory.c util/u_debug_refcnt.c \
+	util/u_debug_refcnt.h util/u_debug_stack.c \
+	util/u_debug_stack.h util/u_debug_symbol.c \
+	util/u_debug_symbol.h util/u_dirty_flags.h \
+	util/u_dirty_surfaces.h util/u_dl.c util/u_dl.h util/u_draw.c \
+	util/u_draw.h util/u_draw_quad.c util/u_draw_quad.h \
+	util/u_dual_blend.h util/u_dump_defines.c util/u_dump.h \
+	util/u_dump_state.c util/u_fifo.h util/u_format.c \
+	util/u_format.h util/u_format_etc.c util/u_format_etc.h \
+	util/u_format_latc.c util/u_format_latc.h \
 	util/u_format_other.c util/u_format_other.h \
 	util/u_format_rgtc.c util/u_format_rgtc.h util/u_format_s3tc.c \
 	util/u_format_s3tc.h util/u_format_tests.c \
@@ -240,59 +242,61 @@ am__libgallium_la_SOURCES_DIST = cso_cache/cso_cache.c \
 	util/u_framebuffer.h util/u_gen_mipmap.c util/u_gen_mipmap.h \
 	util/u_half.h util/u_handle_table.c util/u_handle_table.h \
 	util/u_hash_table.c util/u_hash_table.h util/u_helpers.c \
-	util/u_helpers.h util/u_index_modify.c util/u_index_modify.h \
-	util/u_inlines.h util/u_keymap.c util/u_keymap.h \
-	util/u_linear.c util/u_linear.h util/u_math.c util/u_math.h \
-	util/u_memory.h util/u_mm.c util/u_mm.h util/u_network.c \
-	util/u_network.h util/u_pack_color.h util/u_pointer.h \
-	util/u_prim.h util/u_prim_restart.c util/u_prim_restart.h \
-	util/u_pstipple.c util/u_pstipple.h util/u_pwr8.h \
-	util/u_range.h util/u_rect.h util/u_resource.c \
-	util/u_resource.h util/u_ringbuffer.c util/u_ringbuffer.h \
-	util/u_sampler.c util/u_sampler.h util/u_simple_shaders.c \
-	util/u_simple_shaders.h util/u_split_prim.h util/u_sse.h \
-	util/u_suballoc.c util/u_suballoc.h util/u_surface.c \
-	util/u_surface.h util/u_surfaces.c util/u_surfaces.h \
-	util/u_tests.c util/u_tests.h util/u_texture.c \
-	util/u_texture.h util/u_tile.c util/u_tile.h util/u_time.h \
-	util/u_transfer.c util/u_transfer.h util/u_threaded_context.c \
-	util/u_threaded_context.h util/u_threaded_context_calls.h \
-	util/u_upload_mgr.c util/u_upload_mgr.h util/u_vbuf.c \
-	util/u_vbuf.h util/u_video.h util/u_viewport.h \
-	nir/tgsi_to_nir.c nir/tgsi_to_nir.h indices/u_indices_gen.c \
-	indices/u_unfilled_gen.c util/u_format_table.c \
-	renderonly/renderonly.c renderonly/renderonly.h \
-	gallivm/lp_bld_arit.c gallivm/lp_bld_arit.h \
-	gallivm/lp_bld_arit_overflow.c gallivm/lp_bld_arit_overflow.h \
-	gallivm/lp_bld_assert.c gallivm/lp_bld_assert.h \
-	gallivm/lp_bld_bitarit.c gallivm/lp_bld_bitarit.h \
-	gallivm/lp_bld_const.c gallivm/lp_bld_const.h \
-	gallivm/lp_bld_conv.c gallivm/lp_bld_conv.h \
-	gallivm/lp_bld_debug.cpp gallivm/lp_bld_debug.h \
-	gallivm/lp_bld_flow.c gallivm/lp_bld_flow.h \
-	gallivm/lp_bld_format_aos_array.c gallivm/lp_bld_format_aos.c \
-	gallivm/lp_bld_format_cached.c gallivm/lp_bld_format_float.c \
-	gallivm/lp_bld_format.c gallivm/lp_bld_format.h \
-	gallivm/lp_bld_format_soa.c gallivm/lp_bld_format_srgb.c \
-	gallivm/lp_bld_format_yuv.c gallivm/lp_bld_gather.c \
-	gallivm/lp_bld_gather.h gallivm/lp_bld.h gallivm/lp_bld_init.c \
-	gallivm/lp_bld_init.h gallivm/lp_bld_intr.c \
-	gallivm/lp_bld_intr.h gallivm/lp_bld_limits.h \
-	gallivm/lp_bld_logic.c gallivm/lp_bld_logic.h \
-	gallivm/lp_bld_misc.cpp gallivm/lp_bld_misc.h \
-	gallivm/lp_bld_pack.c gallivm/lp_bld_pack.h \
-	gallivm/lp_bld_printf.c gallivm/lp_bld_printf.h \
-	gallivm/lp_bld_quad.c gallivm/lp_bld_quad.h \
-	gallivm/lp_bld_sample_aos.c gallivm/lp_bld_sample_aos.h \
-	gallivm/lp_bld_sample.c gallivm/lp_bld_sample.h \
-	gallivm/lp_bld_sample_soa.c gallivm/lp_bld_struct.c \
-	gallivm/lp_bld_struct.h gallivm/lp_bld_swizzle.c \
-	gallivm/lp_bld_swizzle.h gallivm/lp_bld_tgsi_action.c \
-	gallivm/lp_bld_tgsi_action.h gallivm/lp_bld_tgsi_aos.c \
-	gallivm/lp_bld_tgsi.c gallivm/lp_bld_tgsi.h \
-	gallivm/lp_bld_tgsi_info.c gallivm/lp_bld_tgsi_soa.c \
-	gallivm/lp_bld_type.c gallivm/lp_bld_type.h draw/draw_llvm.c \
-	draw/draw_llvm.h draw/draw_llvm_sample.c \
+	util/u_helpers.h util/u_idalloc.c util/u_idalloc.h \
+	util/u_index_modify.c util/u_index_modify.h util/u_inlines.h \
+	util/u_linear.c util/u_linear.h util/u_log.c util/u_log.h \
+	util/u_math.c util/u_math.h util/u_memory.h util/u_mm.c \
+	util/u_mm.h util/u_network.c util/u_network.h \
+	util/u_pack_color.h util/u_pointer.h util/u_prim.h \
+	util/u_prim_restart.c util/u_prim_restart.h util/u_pstipple.c \
+	util/u_pstipple.h util/u_pwr8.h util/u_range.h util/u_rect.h \
+	util/u_resource.c util/u_resource.h util/u_ringbuffer.c \
+	util/u_ringbuffer.h util/u_sampler.c util/u_sampler.h \
+	util/u_simple_shaders.c util/u_simple_shaders.h \
+	util/u_split_prim.h util/u_sse.h util/u_suballoc.c \
+	util/u_suballoc.h util/u_surface.c util/u_surface.h \
+	util/u_surfaces.c util/u_surfaces.h util/u_tests.c \
+	util/u_tests.h util/u_texture.c util/u_texture.h util/u_tile.c \
+	util/u_tile.h util/u_transfer.c util/u_transfer.h \
+	util/u_transfer_helper.c util/u_transfer_helper.h \
+	util/u_threaded_context.c util/u_threaded_context.h \
+	util/u_threaded_context_calls.h util/u_upload_mgr.c \
+	util/u_upload_mgr.h util/u_vbuf.c util/u_vbuf.h util/u_video.h \
+	util/u_viewport.h nir/tgsi_to_nir.c nir/tgsi_to_nir.h \
+	indices/u_indices_gen.c indices/u_unfilled_gen.c \
+	util/u_format_table.c renderonly/renderonly.c \
+	renderonly/renderonly.h gallivm/lp_bld_arit.c \
+	gallivm/lp_bld_arit.h gallivm/lp_bld_arit_overflow.c \
+	gallivm/lp_bld_arit_overflow.h gallivm/lp_bld_assert.c \
+	gallivm/lp_bld_assert.h gallivm/lp_bld_bitarit.c \
+	gallivm/lp_bld_bitarit.h gallivm/lp_bld_const.c \
+	gallivm/lp_bld_const.h gallivm/lp_bld_conv.c \
+	gallivm/lp_bld_conv.h gallivm/lp_bld_debug.cpp \
+	gallivm/lp_bld_debug.h gallivm/lp_bld_flow.c \
+	gallivm/lp_bld_flow.h gallivm/lp_bld_format_aos_array.c \
+	gallivm/lp_bld_format_aos.c gallivm/lp_bld_format_cached.c \
+	gallivm/lp_bld_format_float.c gallivm/lp_bld_format.c \
+	gallivm/lp_bld_format.h gallivm/lp_bld_format_soa.c \
+	gallivm/lp_bld_format_srgb.c gallivm/lp_bld_format_yuv.c \
+	gallivm/lp_bld_gather.c gallivm/lp_bld_gather.h \
+	gallivm/lp_bld.h gallivm/lp_bld_init.c gallivm/lp_bld_init.h \
+	gallivm/lp_bld_intr.c gallivm/lp_bld_intr.h \
+	gallivm/lp_bld_limits.h gallivm/lp_bld_logic.c \
+	gallivm/lp_bld_logic.h gallivm/lp_bld_misc.cpp \
+	gallivm/lp_bld_misc.h gallivm/lp_bld_pack.c \
+	gallivm/lp_bld_pack.h gallivm/lp_bld_printf.c \
+	gallivm/lp_bld_printf.h gallivm/lp_bld_quad.c \
+	gallivm/lp_bld_quad.h gallivm/lp_bld_sample_aos.c \
+	gallivm/lp_bld_sample_aos.h gallivm/lp_bld_sample.c \
+	gallivm/lp_bld_sample.h gallivm/lp_bld_sample_soa.c \
+	gallivm/lp_bld_struct.c gallivm/lp_bld_struct.h \
+	gallivm/lp_bld_swizzle.c gallivm/lp_bld_swizzle.h \
+	gallivm/lp_bld_tgsi_action.c gallivm/lp_bld_tgsi_action.h \
+	gallivm/lp_bld_tgsi_aos.c gallivm/lp_bld_tgsi.c \
+	gallivm/lp_bld_tgsi.h gallivm/lp_bld_tgsi_info.c \
+	gallivm/lp_bld_tgsi_soa.c gallivm/lp_bld_type.c \
+	gallivm/lp_bld_type.h draw/draw_llvm.c draw/draw_llvm.h \
+	draw/draw_llvm_sample.c \
 	draw/draw_pt_fetch_shade_pipeline_llvm.c draw/draw_vs_llvm.c
 am__dirstamp = $(am__leading_dot)dirstamp
 am__objects_1 = cso_cache/cso_cache.lo cso_cache/cso_context.lo \
@@ -316,30 +320,31 @@ am__objects_1 = cso_cache/cso_cache.lo cso_cache/cso_context.lo \
 	hud/hud_cpufreq.lo hud/hud_diskstat.lo hud/hud_sensors_temp.lo \
 	hud/hud_driver_query.lo hud/hud_fps.lo \
 	indices/u_primconvert.lo os/os_misc.lo os/os_process.lo \
-	os/os_time.lo pipebuffer/pb_buffer_fenced.lo \
-	pipebuffer/pb_buffer_malloc.lo pipebuffer/pb_bufmgr_alt.lo \
-	pipebuffer/pb_bufmgr_cache.lo pipebuffer/pb_bufmgr_debug.lo \
-	pipebuffer/pb_bufmgr_mm.lo pipebuffer/pb_bufmgr_ondemand.lo \
-	pipebuffer/pb_bufmgr_pool.lo pipebuffer/pb_bufmgr_slab.lo \
-	pipebuffer/pb_cache.lo pipebuffer/pb_slab.lo \
-	pipebuffer/pb_validate.lo postprocess/pp_celshade.lo \
-	postprocess/pp_colors.lo postprocess/pp_init.lo \
-	postprocess/pp_mlaa.lo postprocess/pp_program.lo \
-	postprocess/pp_run.lo rbug/rbug_connection.lo \
-	rbug/rbug_context.lo rbug/rbug_core.lo rbug/rbug_demarshal.lo \
-	rbug/rbug_shader.lo rbug/rbug_texture.lo rtasm/rtasm_cpu.lo \
-	rtasm/rtasm_execmem.lo rtasm/rtasm_x86sse.lo \
-	tgsi/tgsi_aa_point.lo tgsi/tgsi_build.lo tgsi/tgsi_dump.lo \
-	tgsi/tgsi_exec.lo tgsi/tgsi_emulate.lo tgsi/tgsi_from_mesa.lo \
-	tgsi/tgsi_info.lo tgsi/tgsi_iterate.lo tgsi/tgsi_lowering.lo \
-	tgsi/tgsi_parse.lo tgsi/tgsi_point_sprite.lo \
-	tgsi/tgsi_sanity.lo tgsi/tgsi_scan.lo tgsi/tgsi_strings.lo \
-	tgsi/tgsi_text.lo tgsi/tgsi_transform.lo tgsi/tgsi_two_side.lo \
-	tgsi/tgsi_ureg.lo tgsi/tgsi_util.lo translate/translate.lo \
+	pipebuffer/pb_buffer_fenced.lo pipebuffer/pb_buffer_malloc.lo \
+	pipebuffer/pb_bufmgr_alt.lo pipebuffer/pb_bufmgr_cache.lo \
+	pipebuffer/pb_bufmgr_debug.lo pipebuffer/pb_bufmgr_mm.lo \
+	pipebuffer/pb_bufmgr_ondemand.lo pipebuffer/pb_bufmgr_pool.lo \
+	pipebuffer/pb_bufmgr_slab.lo pipebuffer/pb_cache.lo \
+	pipebuffer/pb_slab.lo pipebuffer/pb_validate.lo \
+	postprocess/pp_celshade.lo postprocess/pp_colors.lo \
+	postprocess/pp_init.lo postprocess/pp_mlaa.lo \
+	postprocess/pp_program.lo postprocess/pp_run.lo \
+	rbug/rbug_connection.lo rbug/rbug_context.lo rbug/rbug_core.lo \
+	rbug/rbug_demarshal.lo rbug/rbug_shader.lo \
+	rbug/rbug_texture.lo rtasm/rtasm_cpu.lo rtasm/rtasm_execmem.lo \
+	rtasm/rtasm_x86sse.lo tgsi/tgsi_aa_point.lo tgsi/tgsi_build.lo \
+	tgsi/tgsi_dump.lo tgsi/tgsi_exec.lo tgsi/tgsi_emulate.lo \
+	tgsi/tgsi_from_mesa.lo tgsi/tgsi_info.lo tgsi/tgsi_iterate.lo \
+	tgsi/tgsi_lowering.lo tgsi/tgsi_parse.lo \
+	tgsi/tgsi_point_sprite.lo tgsi/tgsi_sanity.lo \
+	tgsi/tgsi_scan.lo tgsi/tgsi_strings.lo tgsi/tgsi_text.lo \
+	tgsi/tgsi_transform.lo tgsi/tgsi_two_side.lo tgsi/tgsi_ureg.lo \
+	tgsi/tgsi_util.lo translate/translate.lo \
 	translate/translate_cache.lo translate/translate_generic.lo \
-	translate/translate_sse.lo util/u_bitmask.lo util/u_blit.lo \
-	util/u_blitter.lo util/u_cache.lo util/u_cpu_detect.lo \
-	util/u_debug.lo util/u_debug_describe.lo util/u_debug_flush.lo \
+	translate/translate_sse.lo util/u_async_debug.lo \
+	util/u_bitmask.lo util/u_blit.lo util/u_blitter.lo \
+	util/u_cache.lo util/u_cpu_detect.lo util/u_debug.lo \
+	util/u_debug_describe.lo util/u_debug_flush.lo \
 	util/u_debug_image.lo util/u_debug_memory.lo \
 	util/u_debug_refcnt.lo util/u_debug_stack.lo \
 	util/u_debug_symbol.lo util/u_dl.lo util/u_draw.lo \
@@ -350,14 +355,14 @@ am__objects_1 = cso_cache/cso_cache.lo cso_cache/cso_context.lo \
 	util/u_format_tests.lo util/u_format_yuv.lo \
 	util/u_format_zs.lo util/u_framebuffer.lo util/u_gen_mipmap.lo \
 	util/u_handle_table.lo util/u_hash_table.lo util/u_helpers.lo \
-	util/u_index_modify.lo util/u_keymap.lo util/u_linear.lo \
-	util/u_math.lo util/u_mm.lo util/u_network.lo \
+	util/u_idalloc.lo util/u_index_modify.lo util/u_linear.lo \
+	util/u_log.lo util/u_math.lo util/u_mm.lo util/u_network.lo \
 	util/u_prim_restart.lo util/u_pstipple.lo util/u_resource.lo \
 	util/u_ringbuffer.lo util/u_sampler.lo \
 	util/u_simple_shaders.lo util/u_suballoc.lo util/u_surface.lo \
 	util/u_surfaces.lo util/u_tests.lo util/u_texture.lo \
-	util/u_tile.lo util/u_transfer.lo util/u_threaded_context.lo \
-	util/u_upload_mgr.lo util/u_vbuf.lo
+	util/u_tile.lo util/u_transfer.lo util/u_transfer_helper.lo \
+	util/u_threaded_context.lo util/u_upload_mgr.lo util/u_vbuf.lo
 am__objects_2 = nir/tgsi_to_nir.lo
 am__objects_3 = indices/u_indices_gen.lo indices/u_unfilled_gen.lo \
 	util/u_format_table.lo
@@ -560,6 +565,7 @@ CLOVER_STD_OVERRIDE = @CLOVER_STD_OVERRIDE@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CXX = @CXX@
+CXX11_CXXFLAGS = @CXX11_CXXFLAGS@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
@@ -626,6 +632,7 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
+LD_BUILD_ID = @LD_BUILD_ID@
 LD_NO_UNDEFINED = @LD_NO_UNDEFINED@
 LEX = @LEX@
 LEXLIB = @LEXLIB@
@@ -663,7 +670,7 @@ MSVC2013_COMPAT_CFLAGS = @MSVC2013_COMPAT_CFLAGS@
 MSVC2013_COMPAT_CXXFLAGS = @MSVC2013_COMPAT_CXXFLAGS@
 NINE_MAJOR = @NINE_MAJOR@
 NINE_MINOR = @NINE_MINOR@
-NINE_TINY = @NINE_TINY@
+NINE_PATCH = @NINE_PATCH@
 NINE_VERSION = @NINE_VERSION@
 NM = @NM@
 NMEDIT = @NMEDIT@
@@ -673,9 +680,9 @@ NVVIEUX_CFLAGS = @NVVIEUX_CFLAGS@
 NVVIEUX_LIBS = @NVVIEUX_LIBS@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
-OMX_CFLAGS = @OMX_CFLAGS@
-OMX_LIBS = @OMX_LIBS@
-OMX_LIB_INSTALL_DIR = @OMX_LIB_INSTALL_DIR@
+OMX_BELLAGIO_CFLAGS = @OMX_BELLAGIO_CFLAGS@
+OMX_BELLAGIO_LIBS = @OMX_BELLAGIO_LIBS@
+OMX_BELLAGIO_LIB_INSTALL_DIR = @OMX_BELLAGIO_LIB_INSTALL_DIR@
 OPENCL_LIBNAME = @OPENCL_LIBNAME@
 OPENCL_VERSION = @OPENCL_VERSION@
 OSMESA_LIB = @OSMESA_LIB@
@@ -719,7 +726,6 @@ SSE41_CFLAGS = @SSE41_CFLAGS@
 STRIP = @STRIP@
 SWR_AVX2_CXXFLAGS = @SWR_AVX2_CXXFLAGS@
 SWR_AVX_CXXFLAGS = @SWR_AVX_CXXFLAGS@
-SWR_CXX11_CXXFLAGS = @SWR_CXX11_CXXFLAGS@
 SWR_KNL_CXXFLAGS = @SWR_KNL_CXXFLAGS@
 SWR_SKX_CXXFLAGS = @SWR_SKX_CXXFLAGS@
 VALGRIND_CFLAGS = @VALGRIND_CFLAGS@
@@ -729,6 +735,8 @@ VA_LIBS = @VA_LIBS@
 VA_LIB_INSTALL_DIR = @VA_LIB_INSTALL_DIR@
 VA_MAJOR = @VA_MAJOR@
 VA_MINOR = @VA_MINOR@
+VC5_SIMULATOR_CFLAGS = @VC5_SIMULATOR_CFLAGS@
+VC5_SIMULATOR_LIBS = @VC5_SIMULATOR_LIBS@
 VDPAU_CFLAGS = @VDPAU_CFLAGS@
 VDPAU_LIBS = @VDPAU_LIBS@
 VDPAU_LIB_INSTALL_DIR = @VDPAU_LIB_INSTALL_DIR@
@@ -740,16 +748,19 @@ VISIBILITY_CXXFLAGS = @VISIBILITY_CXXFLAGS@
 VL_CFLAGS = @VL_CFLAGS@
 VL_LIBS = @VL_LIBS@
 VULKAN_ICD_INSTALL_DIR = @VULKAN_ICD_INSTALL_DIR@
-WAYLAND_CFLAGS = @WAYLAND_CFLAGS@
-WAYLAND_LIBS = @WAYLAND_LIBS@
+WAYLAND_CLIENT_CFLAGS = @WAYLAND_CLIENT_CFLAGS@
+WAYLAND_CLIENT_LIBS = @WAYLAND_CLIENT_LIBS@
 WAYLAND_PROTOCOLS_DATADIR = @WAYLAND_PROTOCOLS_DATADIR@
 WAYLAND_SCANNER = @WAYLAND_SCANNER@
 WAYLAND_SCANNER_CFLAGS = @WAYLAND_SCANNER_CFLAGS@
 WAYLAND_SCANNER_LIBS = @WAYLAND_SCANNER_LIBS@
+WAYLAND_SERVER_CFLAGS = @WAYLAND_SERVER_CFLAGS@
+WAYLAND_SERVER_LIBS = @WAYLAND_SERVER_LIBS@
+WNO_OVERRIDE_INIT = @WNO_OVERRIDE_INIT@
 X11_INCLUDES = @X11_INCLUDES@
 XA_MAJOR = @XA_MAJOR@
 XA_MINOR = @XA_MINOR@
-XA_TINY = @XA_TINY@
+XA_PATCH = @XA_PATCH@
 XA_VERSION = @XA_VERSION@
 XCB_DRI2_CFLAGS = @XCB_DRI2_CFLAGS@
 XCB_DRI2_LIBS = @XCB_DRI2_LIBS@
@@ -914,8 +925,6 @@ C_SOURCES := \
 	os/os_process.c \
 	os/os_process.h \
 	os/os_thread.h \
-	os/os_time.c \
-	os/os_time.h \
 	pipebuffer/pb_buffer_fenced.c \
 	pipebuffer/pb_buffer_fenced.h \
 	pipebuffer/pb_buffer.h \
@@ -982,6 +991,7 @@ C_SOURCES := \
 	tgsi/tgsi_from_mesa.h \
 	tgsi/tgsi_info.c \
 	tgsi/tgsi_info.h \
+	tgsi/tgsi_info_opcodes.h \
 	tgsi/tgsi_iterate.c \
 	tgsi/tgsi_iterate.h \
 	tgsi/tgsi_lowering.c \
@@ -1014,6 +1024,8 @@ C_SOURCES := \
 	translate/translate_generic.c \
 	translate/translate_sse.c \
 	util/dbghelp.h \
+	util/u_async_debug.h \
+	util/u_async_debug.c \
 	util/u_bitcast.h \
 	util/u_bitmask.c \
 	util/u_bitmask.h \
@@ -1084,13 +1096,15 @@ C_SOURCES := \
 	util/u_hash_table.h \
 	util/u_helpers.c \
 	util/u_helpers.h \
+	util/u_idalloc.c \
+	util/u_idalloc.h \
 	util/u_index_modify.c \
 	util/u_index_modify.h \
 	util/u_inlines.h \
-	util/u_keymap.c \
-	util/u_keymap.h \
 	util/u_linear.c \
 	util/u_linear.h \
+	util/u_log.c \
+	util/u_log.h \
 	util/u_math.c \
 	util/u_math.h \
 	util/u_memory.h \
@@ -1130,9 +1144,10 @@ C_SOURCES := \
 	util/u_texture.h \
 	util/u_tile.c \
 	util/u_tile.h \
-	util/u_time.h \
 	util/u_transfer.c \
 	util/u_transfer.h \
+	util/u_transfer_helper.c \
+	util/u_transfer_helper.h \
 	util/u_threaded_context.c \
 	util/u_threaded_context.h \
 	util/u_threaded_context_calls.h \
@@ -1317,6 +1332,8 @@ GALLIUM_TARGET_CFLAGS = \
 	-I$(top_srcdir)/src/gallium/auxiliary \
 	-I$(top_srcdir)/src/gallium/drivers \
 	-I$(top_srcdir)/src/gallium/winsys \
+	-I$(top_builddir)/src/util/ \
+	-I$(top_builddir)/src/gallium/drivers/ \
 	$(DEFINES) \
 	$(PTHREAD_CFLAGS) \
 	$(LIBDRM_CFLAGS) \
@@ -1382,7 +1399,8 @@ EXTRA_DIST = \
 	util/u_format.csv \
 	util/u_format_pack.py \
 	util/u_format_parse.py \
-	util/u_format_table.py
+	util/u_format_table.py \
+	meson.build
 
 all: all-am
 
@@ -1543,7 +1561,6 @@ os/$(DEPDIR)/$(am__dirstamp):
 	@: > os/$(DEPDIR)/$(am__dirstamp)
 os/os_misc.lo: os/$(am__dirstamp) os/$(DEPDIR)/$(am__dirstamp)
 os/os_process.lo: os/$(am__dirstamp) os/$(DEPDIR)/$(am__dirstamp)
-os/os_time.lo: os/$(am__dirstamp) os/$(DEPDIR)/$(am__dirstamp)
 pipebuffer/$(am__dirstamp):
 	@$(MKDIR_P) pipebuffer
 	@: > pipebuffer/$(am__dirstamp)
@@ -1678,6 +1695,8 @@ util/$(am__dirstamp):
 util/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) util/$(DEPDIR)
 	@: > util/$(DEPDIR)/$(am__dirstamp)
+util/u_async_debug.lo: util/$(am__dirstamp) \
+	util/$(DEPDIR)/$(am__dirstamp)
 util/u_bitmask.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_blit.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_blitter.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
@@ -1733,10 +1752,11 @@ util/u_handle_table.lo: util/$(am__dirstamp) \
 util/u_hash_table.lo: util/$(am__dirstamp) \
 	util/$(DEPDIR)/$(am__dirstamp)
 util/u_helpers.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
+util/u_idalloc.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_index_modify.lo: util/$(am__dirstamp) \
 	util/$(DEPDIR)/$(am__dirstamp)
-util/u_keymap.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_linear.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
+util/u_log.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_math.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_mm.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_network.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
@@ -1760,6 +1780,8 @@ util/u_tests.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_texture.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_tile.lo: util/$(am__dirstamp) util/$(DEPDIR)/$(am__dirstamp)
 util/u_transfer.lo: util/$(am__dirstamp) \
+	util/$(DEPDIR)/$(am__dirstamp)
+util/u_transfer_helper.lo: util/$(am__dirstamp) \
 	util/$(DEPDIR)/$(am__dirstamp)
 util/u_threaded_context.lo: util/$(am__dirstamp) \
 	util/$(DEPDIR)/$(am__dirstamp)
@@ -2053,7 +2075,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@nir/$(DEPDIR)/tgsi_to_nir.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@os/$(DEPDIR)/os_misc.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@os/$(DEPDIR)/os_process.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@os/$(DEPDIR)/os_time.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@pipebuffer/$(DEPDIR)/pb_buffer_fenced.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@pipebuffer/$(DEPDIR)/pb_buffer_malloc.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@pipebuffer/$(DEPDIR)/pb_bufmgr_alt.Plo@am__quote@
@@ -2105,6 +2126,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@translate/$(DEPDIR)/translate_cache.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@translate/$(DEPDIR)/translate_generic.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@translate/$(DEPDIR)/translate_sse.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_async_debug.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_bitmask.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_blit.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_blitter.Plo@am__quote@
@@ -2138,9 +2160,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_handle_table.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_hash_table.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_helpers.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_idalloc.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_index_modify.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_keymap.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_linear.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_log.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_math.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_mm.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_network.Plo@am__quote@
@@ -2158,6 +2181,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_threaded_context.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_tile.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_transfer.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_transfer_helper.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_upload_mgr.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@util/$(DEPDIR)/u_vbuf.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@vl/$(DEPDIR)/libgalliumvl_la-vl_bicubic_filter.Plo@am__quote@

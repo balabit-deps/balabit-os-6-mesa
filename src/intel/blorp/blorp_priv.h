@@ -56,6 +56,7 @@ struct brw_blorp_surface_info
    enum isl_aux_usage aux_usage;
 
    union isl_color_value clear_color;
+   struct blorp_address clear_color_addr;
 
    struct isl_view view;
 
@@ -74,6 +75,11 @@ brw_blorp_surface_info_init(struct blorp_context *blorp,
 void
 blorp_surf_convert_to_single_slice(const struct isl_device *isl_dev,
                                    struct brw_blorp_surface_info *info);
+void
+blorp_surf_convert_to_uncompressed(const struct isl_device *isl_dev,
+                                   struct brw_blorp_surface_info *info,
+                                   uint32_t *x, uint32_t *y,
+                                   uint32_t *width, uint32_t *height);
 
 
 struct brw_blorp_coord_transform
@@ -142,7 +148,7 @@ struct brw_blorp_wm_inputs
 #define BLORP_CREATE_NIR_INPUT(shader, name, type) ({ \
    nir_variable *input = nir_variable_create((shader), nir_var_shader_in, \
                                              type, #name); \
-   if ((shader)->stage == MESA_SHADER_FRAGMENT) \
+   if ((shader)->info.stage == MESA_SHADER_FRAGMENT) \
       input->data.interpolation = INTERP_MODE_FLAT; \
    input->data.location = VARYING_SLOT_VAR0 + \
       offsetof(struct brw_blorp_wm_inputs, name) / (4 * sizeof(float)); \
@@ -337,14 +343,12 @@ blorp_compile_fs(struct blorp_context *blorp, void *mem_ctx,
                  struct nir_shader *nir,
                  struct brw_wm_prog_key *wm_key,
                  bool use_repclear,
-                 struct brw_wm_prog_data *wm_prog_data,
-                 unsigned *program_size);
+                 struct brw_wm_prog_data *wm_prog_data);
 
 const unsigned *
 blorp_compile_vs(struct blorp_context *blorp, void *mem_ctx,
                  struct nir_shader *nir,
-                 struct brw_vs_prog_data *vs_prog_data,
-                 unsigned *program_size);
+                 struct brw_vs_prog_data *vs_prog_data);
 
 bool
 blorp_ensure_sf_program(struct blorp_context *blorp,

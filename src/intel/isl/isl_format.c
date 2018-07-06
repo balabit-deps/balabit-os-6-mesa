@@ -536,6 +536,30 @@ isl_format_supports_ccs_e(const struct gen_device_info *devinfo,
    if (!format_info[format].exists)
       return false;
 
+   /* For simplicity, only report that a format supports CCS_E if blorp can
+    * perform bit-for-bit copies with an image of that format while compressed.
+    * This allows ISL users to avoid having to resolve the image before
+    * performing such a copy. We may want to change this behavior in the
+    * future.
+    *
+    * R11G11B10_FLOAT has no equivalent UINT format. Given how blorp_copy
+    * currently works, bit-for-bit copy operations are not possible without an
+    * intermediate resolve.
+    */
+   if (format == ISL_FORMAT_R11G11B10_FLOAT)
+      return false;
+
+   /* blorp_copy currently doesn't support formats with different bit-widths
+    * per-channel. Until that support is added, report that these formats don't
+    * support CCS_E. FIXME: Add support for these formats.
+    */
+   if (format == ISL_FORMAT_B10G10R10A2_UNORM ||
+       format == ISL_FORMAT_B10G10R10A2_UNORM_SRGB ||
+       format == ISL_FORMAT_R10G10B10A2_UNORM ||
+       format == ISL_FORMAT_R10G10B10A2_UINT) {
+      return false;
+   }
+
    return format_gen(devinfo) >= format_info[format].ccs_e;
 }
 
@@ -608,7 +632,7 @@ isl_formats_are_ccs_e_compatible(const struct gen_device_info *devinfo,
           fmtl1->channels.a.bits == fmtl2->channels.a.bits;
 }
 
-static inline bool
+static bool
 isl_format_has_channel_type(enum isl_format fmt, enum isl_base_type type)
 {
    const struct isl_format_layout *fmtl = isl_format_get_layout(fmt);

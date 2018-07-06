@@ -59,7 +59,7 @@ __gen_uint(uint64_t v, uint32_t start, uint32_t end)
 {
    __gen_validate_value(v);
 
-#if DEBUG
+#ifndef NDEBUG
    const int width = end - start + 1;
    if (width < 64) {
       const uint64_t max = (1ull << width) - 1;
@@ -77,7 +77,7 @@ __gen_sint(int64_t v, uint32_t start, uint32_t end)
 
    __gen_validate_value(v);
 
-#if DEBUG
+#ifndef NDEBUG
    if (width < 64) {
       const int64_t max = (1ll << (width - 1)) - 1;
       const int64_t min = -(1ll << (width - 1));
@@ -94,7 +94,7 @@ static inline uint64_t
 __gen_offset(uint64_t v, uint32_t start, uint32_t end)
 {
    __gen_validate_value(v);
-#if DEBUG
+#ifndef NDEBUG
    uint64_t mask = (~0ull >> (64 - (end - start + 1))) << start;
 
    assert((v & ~mask) == 0);
@@ -117,7 +117,7 @@ __gen_sfixed(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
 
    const float factor = (1 << fract_bits);
 
-#if DEBUG
+#ifndef NDEBUG
    const float max = ((1 << (end - start)) - 1) / factor;
    const float min = -(1 << (end - start)) / factor;
    assert(min <= v && v <= max);
@@ -136,7 +136,7 @@ __gen_ufixed(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
 
    const float factor = (1 << fract_bits);
 
-#if DEBUG
+#ifndef NDEBUG
    const float max = ((1 << (end - start + 1)) - 1) / factor;
    const float min = 0.0f;
    assert(min <= v && v <= max);
@@ -902,7 +902,12 @@ struct GEN4_RENDER_SURFACE_STATE {
 #define READ_WRITE                               1
    uint32_t                             MediaBoundaryPixelMode;
 #define NORMAL_MODE                              0
-   uint32_t                             CubeFaceEnables;
+   bool                                 CubeFaceEnablePositiveZ;
+   bool                                 CubeFaceEnableNegativeZ;
+   bool                                 CubeFaceEnablePositiveY;
+   bool                                 CubeFaceEnableNegativeY;
+   bool                                 CubeFaceEnablePositiveX;
+   bool                                 CubeFaceEnableNegativeX;
    __gen_address_type                   SurfaceBaseAddress;
    uint32_t                             Height;
    uint32_t                             Width;
@@ -936,7 +941,12 @@ GEN4_RENDER_SURFACE_STATE_pack(__attribute__((unused)) __gen_user_data *data,
       __gen_uint(values->MIPMapLayoutMode, 10, 10) |
       __gen_uint(values->RenderCacheReadWriteMode, 8, 8) |
       __gen_uint(values->MediaBoundaryPixelMode, 6, 7) |
-      __gen_uint(values->CubeFaceEnables, 0, 5);
+      __gen_uint(values->CubeFaceEnablePositiveZ, 0, 0) |
+      __gen_uint(values->CubeFaceEnableNegativeZ, 1, 1) |
+      __gen_uint(values->CubeFaceEnablePositiveY, 2, 2) |
+      __gen_uint(values->CubeFaceEnableNegativeY, 3, 3) |
+      __gen_uint(values->CubeFaceEnablePositiveX, 4, 4) |
+      __gen_uint(values->CubeFaceEnableNegativeX, 5, 5);
 
    dw[1] = __gen_combine_address(data, &dw[1], values->SurfaceBaseAddress, 0);
 
@@ -1034,7 +1044,7 @@ struct GEN4_SAMPLER_STATE {
    enum GEN4_Texture_Coordinate_Mode    TCXAddressControlMode;
    enum GEN4_Texture_Coordinate_Mode    TCYAddressControlMode;
    enum GEN4_Texture_Coordinate_Mode    TCZAddressControlMode;
-   uint64_t                             BorderColorPointer;
+   __gen_address_type                   BorderColorPointer;
    bool                                 ChromaKeyEnable;
    uint32_t                             ChromaKeyIndex;
    uint32_t                             ChromaKeyMode;
@@ -1082,8 +1092,7 @@ GEN4_SAMPLER_STATE_pack(__attribute__((unused)) __gen_user_data *data,
       __gen_uint(values->TCYAddressControlMode, 3, 5) |
       __gen_uint(values->TCZAddressControlMode, 0, 2);
 
-   dw[2] =
-      __gen_offset(values->BorderColorPointer, 5, 31);
+   dw[2] = __gen_combine_address(data, &dw[2], values->BorderColorPointer, 0);
 
    dw[3] =
       __gen_uint(values->ChromaKeyEnable, 25, 25) |

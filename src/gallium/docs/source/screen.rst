@@ -24,8 +24,6 @@ The integer capabilities:
 
 * ``PIPE_CAP_NPOT_TEXTURES``: Whether :term:`NPOT` textures may have repeat modes,
   normalized coordinates, and mipmaps.
-* ``PIPE_CAP_TWO_SIDED_STENCIL``: Whether the stencil test can also affect back-facing
-  polygons.
 * ``PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS``: How many dual-source blend RTs are support.
   :ref:`Blend` for more information.
 * ``PIPE_CAP_ANISOTROPIC_FILTER``: Whether textures can be filtered anisotropically.
@@ -34,9 +32,6 @@ The integer capabilities:
   bound.
 * ``PIPE_CAP_OCCLUSION_QUERY``: Whether occlusion queries are available.
 * ``PIPE_CAP_QUERY_TIME_ELAPSED``: Whether PIPE_QUERY_TIME_ELAPSED queries are available.
-* ``PIPE_CAP_TEXTURE_SHADOW_MAP``: indicates whether the fragment shader hardware
-  can do the depth texture / Z comparison operation in TEX instructions
-  for shadow testing.
 * ``PIPE_CAP_TEXTURE_SWIZZLE``: Whether swizzling through sampler views is
   supported.
 * ``PIPE_CAP_MAX_TEXTURE_2D_LEVELS``: The maximum number of mipmap levels available
@@ -115,10 +110,6 @@ The integer capabilities:
   aligned to 4.  If false, there are no restrictions on src_offset.
 * ``PIPE_CAP_COMPUTE``: Whether the implementation supports the
   compute entry points defined in pipe_context and pipe_screen.
-* ``PIPE_CAP_USER_CONSTANT_BUFFERS``: Whether user-space constant buffers
-  are supported.  If not, the state tracker must put constants into HW
-  resources/buffers.  If user-space constant buffers are supported, the
-  driver must still accept HW constant buffers also.
 * ``PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT``: Describes the required
   alignment of pipe_constant_buffer::buffer_offset.
 * ``PIPE_CAP_START_INSTANCE``: Whether the driver supports
@@ -396,6 +387,31 @@ The integer capabilities:
   ``TGSI_PROPERTY_FS_POST_DEPTH_COVERAGE`` is supported.
 * ``PIPE_CAP_BINDLESS_TEXTURE``: Whether bindless texture operations are
   supported.
+* ``PIPE_CAP_NIR_SAMPLERS_AS_DEREF``: Whether NIR tex instructions should
+  reference texture and sampler as NIR derefs instead of by indices.
+* ``PIPE_CAP_QUERY_SO_OVERFLOW``: Whether the
+  ``PIPE_QUERY_SO_OVERFLOW_PREDICATE`` and
+  ``PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE`` query types are supported. Note that
+  for a driver that does not support multiple output streams (i.e.,
+  ``PIPE_CAP_MAX_VERTEX_STREAMS`` is 1), both query types are identical.
+* ``PIPE_CAP_MEMOBJ``: Whether operations on memory objects are supported.
+* ``PIPE_CAP_LOAD_CONSTBUF``: True if the driver supports TGSI_OPCODE_LOAD use
+  with constant buffers.
+* ``PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS``: Any TGSI register can be used as
+  an address for indirect register indexing.
+* ``PIPE_CAP_TILE_RASTER_ORDER``: Whether the driver supports
+  GL_MESA_tile_raster_order, using the tile_raster_order_* fields in
+  pipe_rasterizer_state.
+* ``PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES``: Limit on combined shader
+  output resources (images + buffers + fragment outputs). If 0 the state
+  tracker works it out.
+* ``PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET``:
+  Whether pipe_vertex_buffer::buffer_offset is treated as signed. The u_vbuf
+  module needs this for optimal performance in workstation applications.
+* ``PIPE_CAP_CONTEXT_PRIORITY_MASK``: For drivers that support per-context
+  priorities, this returns a bitmask of PIPE_CONTEXT_PRIORITY_x for the
+  supported priority levels.  A driver that does not support prioritized
+  contexts can return 0.
 
 
 .. _pipe_capf:
@@ -438,20 +454,15 @@ support different features.
 * ``PIPE_SHADER_CAP_MAX_CONST_BUFFER_SIZE``: The maximum size per constant buffer in bytes.
 * ``PIPE_SHADER_CAP_MAX_CONST_BUFFERS``: Maximum number of constant buffers that can be bound
   to any shader stage using ``set_constant_buffer``. If 0 or 1, the pipe will
-  only permit binding one constant buffer per shader, and the shaders will
-  not permit two-dimensional access to constants.
+  only permit binding one constant buffer per shader.
 
 If a value greater than 0 is returned, the driver can have multiple
-constant buffers bound to shader stages. The CONST register file can
-be accessed with two-dimensional indices, like in the example below.
+constant buffers bound to shader stages. The CONST register file is
+accessed with two-dimensional indices, like in the example below.
 
 DCL CONST[0][0..7]       # declare first 8 vectors of constbuf 0
 DCL CONST[3][0]          # declare first vector of constbuf 3
 MOV OUT[0], CONST[0][3]  # copy vector 3 of constbuf 0
-
-For backwards compatibility, one-dimensional access to CONST register
-file is still supported. In that case, the constbuf index is assumed
-to be 0.
 
 * ``PIPE_SHADER_CAP_MAX_TEMPS``: The maximum number of temporary registers.
 * ``PIPE_SHADER_CAP_TGSI_CONT_SUPPORTED``: Whether the continue opcode is supported.
@@ -467,6 +478,9 @@ to be 0.
   BGNSUB, ENDSUB, CAL, and RET, including RET in the main block.
 * ``PIPE_SHADER_CAP_INTEGERS``: Whether integer opcodes are supported.
   If unsupported, only float opcodes are supported.
+* ``PIPE_SHADER_CAP_INT64_ATOMICS``: Whether int64 atomic opcodes are supported. The device needs to support add, sub, swap, cmpswap, and, or, xor, min, and max.
+* ``PIPE_SHADER_CAP_FP16``: Whether half precision floating-point opcodes are supported.
+   If unsupported, half precision ops need to be lowered to full precision.
 * ``PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS``: The maximum number of texture
   samplers.
 * ``PIPE_SHADER_CAP_PREFERRED_IR``: Preferred representation of the
@@ -477,6 +491,7 @@ to be 0.
   is supported. If it is, DTRUNC/DCEIL/DFLR/DROUND opcodes may be used.
 * ``PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED``: Whether DFRACEXP and
   DLDEXP are supported.
+* ``PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED``: Whether LDEXP is supported.
 * ``PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED``: Whether FMA and DFMA (doubles only)
   are supported.
 * ``PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE``: Whether the driver doesn't
@@ -499,7 +514,10 @@ to be 0.
 * ``PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS``: Whether the merge registers
   TGSI pass is skipped. This might reduce code size and register pressure if
   the underlying driver has a real backend compiler.
-
+* ``PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS``: If atomic counters are separate,
+  how many HW counters are available for this stage. (0 uses SSBO atomics).
+* ``PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS``: If atomic counters are
+  separate, how many atomic counter buffers are available for this stage.
 
 .. _pipe_compute_cap:
 
@@ -662,7 +680,7 @@ get_paramf
 
 Get a floating-point screen parameter.
 
-**param** is one of the :ref:`PIPE_CAP` names.
+**param** is one of the :ref:`PIPE_CAPF` names.
 
 context_create
 ^^^^^^^^^^^^^^
@@ -731,9 +749,9 @@ For cube maps this must be 6, for other textures 1.
 **nr_samples** the nr of msaa samples. 0 (or 1) specifies a resource
 which isn't multisampled.
 
-**usage** one of the PIPE_USAGE flags.
+**usage** one of the :ref:`PIPE_USAGE` flags.
 
-**bind** bitmask of the PIPE_BIND flags.
+**bind** bitmask of the :ref:`PIPE_BIND` flags.
 
 **flags** bitmask of PIPE_RESOURCE_FLAG flags.
 

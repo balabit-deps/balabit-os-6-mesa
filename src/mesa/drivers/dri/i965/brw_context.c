@@ -73,6 +73,7 @@
 #include "tnl/t_pipeline.h"
 #include "util/ralloc.h"
 #include "util/debug.h"
+#include "util/disk_cache.h"
 #include "isl/isl.h"
 
 /***************************************
@@ -261,6 +262,8 @@ static void
 brw_init_driver_functions(struct brw_context *brw,
                           struct dd_function_table *functions)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
    _mesa_init_driver_functions(functions);
 
    /* GLX uses DRI2 invalidate events to handle window resizing.
@@ -280,7 +283,6 @@ brw_init_driver_functions(struct brw_context *brw,
 
    intelInitTextureFuncs(functions);
    intelInitTextureImageFuncs(functions);
-   intelInitTextureSubImageFuncs(functions);
    intelInitTextureCopyImageFuncs(functions);
    intelInitCopyImageFuncs(functions);
    intelInitClearFuncs(functions);
@@ -292,9 +294,9 @@ brw_init_driver_functions(struct brw_context *brw,
 
    brwInitFragProgFuncs( functions );
    brw_init_common_queryobj_functions(functions);
-   if (brw->gen >= 8 || brw->is_haswell)
+   if (devinfo->gen >= 8 || devinfo->is_haswell)
       hsw_init_queryobj_functions(functions);
-   else if (brw->gen >= 6)
+   else if (devinfo->gen >= 6)
       gen6_init_queryobj_functions(functions);
    else
       gen4_init_queryobj_functions(functions);
@@ -310,7 +312,7 @@ brw_init_driver_functions(struct brw_context *brw,
       functions->EndTransformFeedback = hsw_end_transform_feedback;
       functions->PauseTransformFeedback = hsw_pause_transform_feedback;
       functions->ResumeTransformFeedback = hsw_resume_transform_feedback;
-   } else if (brw->gen >= 7) {
+   } else if (devinfo->gen >= 7) {
       functions->BeginTransformFeedback = gen7_begin_transform_feedback;
       functions->EndTransformFeedback = gen7_end_transform_feedback;
       functions->PauseTransformFeedback = gen7_pause_transform_feedback;
@@ -326,28 +328,35 @@ brw_init_driver_functions(struct brw_context *brw,
          brw_get_transform_feedback_vertex_count;
    }
 
-   if (brw->gen >= 6)
+   if (devinfo->gen >= 6)
       functions->GetSamplePosition = gen6_get_sample_position;
+
+   /* GL_ARB_get_program_binary */
+   brw_program_binary_init(brw->screen->deviceID);
+   functions->GetProgramBinaryDriverSHA1 = brw_get_program_binary_driver_sha1;
+   functions->ProgramBinarySerializeDriverBlob = brw_program_serialize_nir;
+   functions->ProgramBinaryDeserializeDriverBlob =
+      brw_deserialize_program_binary;
 }
 
 static void
 brw_initialize_context_constants(struct brw_context *brw)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct gl_context *ctx = &brw->ctx;
    const struct brw_compiler *compiler = brw->screen->compiler;
 
    const bool stage_exists[MESA_SHADER_STAGES] = {
       [MESA_SHADER_VERTEX] = true,
-      [MESA_SHADER_TESS_CTRL] = brw->gen >= 7,
-      [MESA_SHADER_TESS_EVAL] = brw->gen >= 7,
-      [MESA_SHADER_GEOMETRY] = brw->gen >= 6,
+      [MESA_SHADER_TESS_CTRL] = devinfo->gen >= 7,
+      [MESA_SHADER_TESS_EVAL] = devinfo->gen >= 7,
+      [MESA_SHADER_GEOMETRY] = devinfo->gen >= 6,
       [MESA_SHADER_FRAGMENT] = true,
       [MESA_SHADER_COMPUTE] =
-         ((ctx->API == API_OPENGL_COMPAT || ctx->API == API_OPENGL_CORE) &&
+         (_mesa_is_desktop_gl(ctx) &&
           ctx->Const.MaxComputeWorkGroupSize[0] >= 1024) ||
          (ctx->API == API_OPENGLES2 &&
-          ctx->Const.MaxComputeWorkGroupSize[0] >= 128) ||
-         _mesa_extension_override_enables.ARB_compute_shader,
+          ctx->Const.MaxComputeWorkGroupSize[0] >= 128),
    };
 
    unsigned num_stages = 0;
@@ -357,7 +366,7 @@ brw_initialize_context_constants(struct brw_context *brw)
    }
 
    unsigned max_samplers =
-      brw->gen >= 8 || brw->is_haswell ? BRW_MAX_TEX_UNIT : 16;
+      devinfo->gen >= 8 || devinfo->is_haswell ? BRW_MAX_TEX_UNIT : 16;
 
    ctx->Const.MaxDualSourceDrawBuffers = 1;
    ctx->Const.MaxDrawBuffers = BRW_MAX_DRAW_BUFFERS;
@@ -383,7 +392,7 @@ brw_initialize_context_constants(struct brw_context *brw)
 
    ctx->Const.MaxTextureCoordUnits = 8; /* Mesa limit */
    ctx->Const.MaxImageUnits = MAX_IMAGE_UNITS;
-   if (brw->gen >= 7) {
+   if (devinfo->gen >= 7) {
       ctx->Const.MaxRenderbufferSize = 16384;
       ctx->Const.MaxTextureLevels = MIN2(15 /* 16384 */, MAX_TEXTURE_LEVELS);
       ctx->Const.MaxCubeTextureLevels = 15; /* 16384 */
@@ -393,17 +402,17 @@ brw_initialize_context_constants(struct brw_context *brw)
       ctx->Const.MaxCubeTextureLevels = 14; /* 8192 */
    }
    ctx->Const.Max3DTextureLevels = 12; /* 2048 */
-   ctx->Const.MaxArrayTextureLayers = brw->gen >= 7 ? 2048 : 512;
+   ctx->Const.MaxArrayTextureLayers = devinfo->gen >= 7 ? 2048 : 512;
    ctx->Const.MaxTextureMbytes = 1536;
-   ctx->Const.MaxTextureRectSize = brw->gen >= 7 ? 16384 : 8192;
+   ctx->Const.MaxTextureRectSize = devinfo->gen >= 7 ? 16384 : 8192;
    ctx->Const.MaxTextureMaxAnisotropy = 16.0;
    ctx->Const.MaxTextureLodBias = 15.0;
    ctx->Const.StripTextureBorder = true;
-   if (brw->gen >= 7) {
+   if (devinfo->gen >= 7) {
       ctx->Const.MaxProgramTextureGatherComponents = 4;
       ctx->Const.MinProgramTextureGatherOffset = -32;
       ctx->Const.MaxProgramTextureGatherOffset = 31;
-   } else if (brw->gen == 6) {
+   } else if (devinfo->gen == 6) {
       ctx->Const.MaxProgramTextureGatherComponents = 1;
       ctx->Const.MinProgramTextureGatherOffset = -8;
       ctx->Const.MaxProgramTextureGatherOffset = 7;
@@ -502,7 +511,7 @@ brw_initialize_context_constants(struct brw_context *brw)
 
    ctx->Const.MinLineWidth = 1.0;
    ctx->Const.MinLineWidthAA = 1.0;
-   if (brw->gen >= 6) {
+   if (devinfo->gen >= 6) {
       ctx->Const.MaxLineWidth = 7.375;
       ctx->Const.MaxLineWidthAA = 7.375;
       ctx->Const.LineWidthGranularity = 0.125;
@@ -525,12 +534,10 @@ brw_initialize_context_constants(struct brw_context *brw)
    ctx->Const.MaxPointSizeAA = 255.0;
    ctx->Const.PointSizeGranularity = 1.0;
 
-   if (brw->gen >= 5 || brw->is_g4x)
+   if (devinfo->gen >= 5 || devinfo->is_g4x)
       ctx->Const.MaxClipPlanes = 8;
 
    ctx->Const.GLSLTessLevelsAsInputs = true;
-   ctx->Const.LowerTCSPatchVerticesIn = brw->gen >= 8;
-   ctx->Const.LowerTESPatchVerticesIn = true;
    ctx->Const.PrimitiveRestartForPatches = true;
 
    ctx->Const.Program[MESA_SHADER_VERTEX].MaxNativeInstructions = 16 * 1024;
@@ -580,7 +587,7 @@ brw_initialize_context_constants(struct brw_context *brw)
     * that affect provoking vertex decision. Always use last vertex
     * convention for quad primitive which works as expected for now.
     */
-   if (brw->gen >= 6)
+   if (devinfo->gen >= 6)
       ctx->Const.QuadsFollowProvokingVertexConvention = false;
 
    ctx->Const.NativeIntegers = true;
@@ -629,10 +636,11 @@ brw_initialize_context_constants(struct brw_context *brw)
    ctx->Const.TextureBufferOffsetAlignment = 16;
    ctx->Const.MaxTextureBufferSize = 128 * 1024 * 1024;
 
-   if (brw->gen >= 6) {
+   if (devinfo->gen >= 6) {
       ctx->Const.MaxVarying = 32;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxOutputComponents = 128;
-      ctx->Const.Program[MESA_SHADER_GEOMETRY].MaxInputComponents = 64;
+      ctx->Const.Program[MESA_SHADER_GEOMETRY].MaxInputComponents =
+         compiler->scalar_stage[MESA_SHADER_GEOMETRY] ? 128 : 64;
       ctx->Const.Program[MESA_SHADER_GEOMETRY].MaxOutputComponents = 128;
       ctx->Const.Program[MESA_SHADER_FRAGMENT].MaxInputComponents = 128;
       ctx->Const.Program[MESA_SHADER_TESS_CTRL].MaxInputComponents = 128;
@@ -647,13 +655,13 @@ brw_initialize_context_constants(struct brw_context *brw)
          brw->screen->compiler->glsl_compiler_options[i];
    }
 
-   if (brw->gen >= 7) {
+   if (devinfo->gen >= 7) {
       ctx->Const.MaxViewportWidth = 32768;
       ctx->Const.MaxViewportHeight = 32768;
    }
 
    /* ARB_viewport_array, OES_viewport_array */
-   if (brw->gen >= 6) {
+   if (devinfo->gen >= 6) {
       ctx->Const.MaxViewports = GEN6_NUM_VIEWPORTS;
       ctx->Const.ViewportSubpixelBits = 0;
 
@@ -664,7 +672,7 @@ brw_initialize_context_constants(struct brw_context *brw)
    }
 
    /* ARB_gpu_shader5 */
-   if (brw->gen >= 7)
+   if (devinfo->gen >= 7)
       ctx->Const.MaxVertexStreams = MIN2(4, MAX_VERTEX_STREAMS);
 
    /* ARB_framebuffer_no_attachments */
@@ -675,6 +683,35 @@ brw_initialize_context_constants(struct brw_context *brw)
 
    /* OES_primitive_bounding_box */
    ctx->Const.NoPrimitiveBoundingBoxOutput = true;
+
+   /* TODO: We should be able to use STD430 packing by default on all hardware
+    * but some piglit tests [1] currently fail on SNB when this is enabled.
+    * The problem is the messages we're using for doing uniform pulls
+    * in the vec4 back-end on SNB is the OWORD block load instruction, which
+    * takes its offset in units of OWORDS (16 bytes).  On IVB+, we use the
+    * sampler which doesn't have these restrictions.
+    *
+    * In the scalar back-end, we use the sampler for dynamic uniform loads and
+    * pull an entire cache line at a time for constant offset loads both of
+    * which support almost any alignment.
+    *
+    * [1] glsl-1.40/uniform_buffer/vs-float-array-variable-index.shader_test
+    */
+   if (devinfo->gen >= 7)
+      ctx->Const.UseSTD430AsDefaultPacking = true;
+
+   if (!(ctx->Const.ContextFlags & GL_CONTEXT_FLAG_DEBUG_BIT))
+      ctx->Const.AllowMappedBuffersDuringExecution = true;
+
+   /* GL_ARB_get_program_binary */
+   /* The QT framework has a bug in their shader program cache, which is built
+    * on GL_ARB_get_program_binary. In an effort to allow them to fix the bug
+    * we don't enable more than 1 binary format for compatibility profiles.
+    * This is only being done on the 18.0 release branch.
+    */
+   if (ctx->API != API_OPENGL_COMPAT) {
+      ctx->Const.NumProgramBinaryFormats = 1;
+   }
 }
 
 static void
@@ -685,7 +722,7 @@ brw_initialize_cs_context_constants(struct brw_context *brw)
    struct gen_device_info *devinfo = &brw->screen->devinfo;
 
    /* FINISHME: Do this for all platforms that the kernel supports */
-   if (brw->is_cherryview &&
+   if (devinfo->is_cherryview &&
        screen->subslice_total > 0 && screen->eu_total > 0) {
       /* Logical CS threads = EUs per subslice * 7 threads per EU */
       uint32_t max_cs_threads = screen->eu_total / screen->subslice_total * 7;
@@ -723,6 +760,7 @@ brw_initialize_cs_context_constants(struct brw_context *brw)
 static void
 brw_process_driconf_options(struct brw_context *brw)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct gl_context *ctx = &brw->ctx;
 
    driOptionCache *options = &brw->optionCache;
@@ -741,7 +779,7 @@ brw_process_driconf_options(struct brw_context *brw)
    if (INTEL_DEBUG & DEBUG_NO_HIZ) {
        brw->has_hiz = false;
        /* On gen6, you can only do separate stencil with HIZ. */
-       if (brw->gen == 6)
+       if (devinfo->gen == 6)
           brw->has_separate_stencil = false;
    }
 
@@ -793,18 +831,22 @@ brw_process_driconf_options(struct brw_context *brw)
 
    brw->dual_color_blend_by_location =
       driQueryOptionb(options, "dual_color_blend_by_location");
+
+   ctx->Const.AllowGLSLCrossStageInterpolationMismatch =
+      driQueryOptionb(options, "allow_glsl_cross_stage_interpolation_mismatch");
+
+   ctx->Const.dri_config_options_sha1 = ralloc_array(brw, unsigned char, 20);
+   driComputeOptionsSha1(&brw->screen->optionCache,
+                         ctx->Const.dri_config_options_sha1);
 }
 
 GLboolean
 brwCreateContext(gl_api api,
-	         const struct gl_config *mesaVis,
-		 __DRIcontext *driContextPriv,
-                 unsigned major_version,
-                 unsigned minor_version,
-                 uint32_t flags,
-                 bool notify_reset,
+                 const struct gl_config *mesaVis,
+                 __DRIcontext *driContextPriv,
+                 const struct __DriverContextConfig *ctx_config,
                  unsigned *dri_ctx_error,
-	         void *sharedContextPrivate)
+                 void *sharedContextPrivate)
 {
    struct gl_context *shareCtx = (struct gl_context *) sharedContextPrivate;
    struct intel_screen *screen = driContextPriv->driScreenPriv->driverPrivate;
@@ -821,10 +863,21 @@ brwCreateContext(gl_api api,
    if (screen->has_context_reset_notification)
       allowed_flags |= __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS;
 
-   if (flags & ~allowed_flags) {
+   if (ctx_config->flags & ~allowed_flags) {
       *dri_ctx_error = __DRI_CTX_ERROR_UNKNOWN_FLAG;
       return false;
    }
+
+   if (ctx_config->attribute_mask &
+       ~(__DRIVER_CONTEXT_ATTRIB_RESET_STRATEGY |
+         __DRIVER_CONTEXT_ATTRIB_PRIORITY)) {
+      *dri_ctx_error = __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
+      return false;
+   }
+
+   bool notify_reset =
+      ((ctx_config->attribute_mask & __DRIVER_CONTEXT_ATTRIB_RESET_STRATEGY) &&
+       ctx_config->reset_strategy != __DRI_CTX_RESET_NO_NOTIFICATION);
 
    struct brw_context *brw = rzalloc(NULL, struct brw_context);
    if (!brw) {
@@ -838,24 +891,9 @@ brwCreateContext(gl_api api,
    brw->screen = screen;
    brw->bufmgr = screen->bufmgr;
 
-   brw->gen = devinfo->gen;
-   brw->gt = devinfo->gt;
-   brw->is_g4x = devinfo->is_g4x;
-   brw->is_baytrail = devinfo->is_baytrail;
-   brw->is_haswell = devinfo->is_haswell;
-   brw->is_cherryview = devinfo->is_cherryview;
-   brw->is_broxton = devinfo->is_broxton || devinfo->is_geminilake;
-   brw->has_llc = devinfo->has_llc;
    brw->has_hiz = devinfo->has_hiz_and_separate_stencil;
    brw->has_separate_stencil = devinfo->has_hiz_and_separate_stencil;
-   brw->has_pln = devinfo->has_pln;
-   brw->has_compr4 = devinfo->has_compr4;
-   brw->has_surface_tile_offset = devinfo->has_surface_tile_offset;
-   brw->has_negative_rhw_bug = devinfo->has_negative_rhw_bug;
-   brw->needs_unlit_centroid_workaround =
-      devinfo->needs_unlit_centroid_workaround;
 
-   brw->must_use_separate_stencil = devinfo->must_use_separate_stencil;
    brw->has_swizzling = screen->hw_has_swizzling;
 
    brw->isl_dev = screen->isl_dev;
@@ -866,17 +904,13 @@ brwCreateContext(gl_api api,
    brw->gs.base.stage = MESA_SHADER_GEOMETRY;
    brw->wm.base.stage = MESA_SHADER_FRAGMENT;
    brw->cs.base.stage = MESA_SHADER_COMPUTE;
-   if (brw->gen >= 8) {
-      gen8_init_vtable_surface_functions(brw);
+   if (devinfo->gen >= 8) {
       brw->vtbl.emit_depth_stencil_hiz = gen8_emit_depth_stencil_hiz;
-   } else if (brw->gen >= 7) {
-      gen7_init_vtable_surface_functions(brw);
+   } else if (devinfo->gen >= 7) {
       brw->vtbl.emit_depth_stencil_hiz = gen7_emit_depth_stencil_hiz;
-   } else if (brw->gen >= 6) {
-      gen6_init_vtable_surface_functions(brw);
+   } else if (devinfo->gen >= 6) {
       brw->vtbl.emit_depth_stencil_hiz = gen6_emit_depth_stencil_hiz;
    } else {
-      gen4_init_vtable_surface_functions(brw);
       brw->vtbl.emit_depth_stencil_hiz = brw_emit_depth_stencil_hiz;
    }
 
@@ -894,7 +928,7 @@ brwCreateContext(gl_api api,
       return false;
    }
 
-   driContextSetFlags(ctx, flags);
+   driContextSetFlags(ctx, ctx_config->flags);
 
    /* Initialize the software rasterizer and helper modules.
     *
@@ -935,9 +969,9 @@ brwCreateContext(gl_api api,
 
    intel_fbo_init(brw);
 
-   intel_batchbuffer_init(&brw->batch, brw->bufmgr, brw->has_llc);
+   intel_batchbuffer_init(brw);
 
-   if (brw->gen >= 6) {
+   if (devinfo->gen >= 6) {
       /* Create a new hardware context.  Using a hardware context means that
        * our GPU state will be saved/restored on context switch, allowing us
        * to assume that the GPU is in the same state we left it in.
@@ -949,6 +983,26 @@ brwCreateContext(gl_api api,
 
       if (!brw->hw_ctx) {
          fprintf(stderr, "Failed to create hardware context.\n");
+         intelDestroyContext(driContextPriv);
+         return false;
+      }
+
+      int hw_priority = BRW_CONTEXT_MEDIUM_PRIORITY;
+      if (ctx_config->attribute_mask & __DRIVER_CONTEXT_ATTRIB_PRIORITY) {
+         switch (ctx_config->priority) {
+         case __DRI_CTX_PRIORITY_LOW:
+            hw_priority = BRW_CONTEXT_LOW_PRIORITY;
+            break;
+         case __DRI_CTX_PRIORITY_HIGH:
+            hw_priority = BRW_CONTEXT_HIGH_PRIORITY;
+            break;
+         }
+      }
+      if (hw_priority != I915_CONTEXT_DEFAULT_PRIORITY &&
+          brw_hw_context_set_priority(brw->bufmgr, brw->hw_ctx, hw_priority)) {
+         fprintf(stderr,
+		 "Failed to set priority [%d:%d] for hardware context.\n",
+                 ctx_config->priority, hw_priority);
          intelDestroyContext(driContextPriv);
          return false;
       }
@@ -970,7 +1024,7 @@ brwCreateContext(gl_api api,
 
    brw->urb.size = devinfo->urb.size;
 
-   if (brw->gen == 6)
+   if (devinfo->gen == 6)
       brw->urb.gs_present = false;
 
    brw->prim_restart.in_progress = false;
@@ -987,12 +1041,12 @@ brwCreateContext(gl_api api,
 
    brw_draw_init( brw );
 
-   if ((flags & __DRI_CTX_FLAG_DEBUG) != 0) {
+   if ((ctx_config->flags & __DRI_CTX_FLAG_DEBUG) != 0) {
       /* Turn on some extra GL_ARB_debug_output generation. */
       brw->perf_debug = true;
    }
 
-   if ((flags & __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS) != 0) {
+   if ((ctx_config->flags & __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS) != 0) {
       ctx->Const.ContextFlags |= GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT_ARB;
       ctx->Const.RobustAccess = GL_TRUE;
    }
@@ -1000,6 +1054,7 @@ brwCreateContext(gl_api api,
    if (INTEL_DEBUG & DEBUG_SHADER_TIME)
       brw_init_shader_time(brw);
 
+   _mesa_override_extensions(ctx);
    _mesa_compute_version(ctx);
 
    _mesa_initialize_dispatch_tables(ctx);
@@ -1010,6 +1065,8 @@ brwCreateContext(gl_api api,
 
    vbo_use_buffer_objects(ctx);
    vbo_always_unmap_buffers(ctx);
+
+   brw_disk_cache_init(brw);
 
    return true;
 }
@@ -1031,23 +1088,18 @@ intelDestroyContext(__DRIcontext * driContextPriv)
       brw_destroy_shader_time(brw);
    }
 
-   if (brw->gen >= 6)
-      blorp_finish(&brw->blorp);
+   blorp_finish(&brw->blorp);
 
    brw_destroy_state(brw);
    brw_draw_destroy(brw);
 
    brw_bo_unreference(brw->curbe.curbe_bo);
-   if (brw->vs.base.scratch_bo)
-      brw_bo_unreference(brw->vs.base.scratch_bo);
-   if (brw->tcs.base.scratch_bo)
-      brw_bo_unreference(brw->tcs.base.scratch_bo);
-   if (brw->tes.base.scratch_bo)
-      brw_bo_unreference(brw->tes.base.scratch_bo);
-   if (brw->gs.base.scratch_bo)
-      brw_bo_unreference(brw->gs.base.scratch_bo);
-   if (brw->wm.base.scratch_bo)
-      brw_bo_unreference(brw->wm.base.scratch_bo);
+
+   brw_bo_unreference(brw->vs.base.scratch_bo);
+   brw_bo_unreference(brw->tcs.base.scratch_bo);
+   brw_bo_unreference(brw->tes.base.scratch_bo);
+   brw_bo_unreference(brw->gs.base.scratch_bo);
+   brw_bo_unreference(brw->wm.base.scratch_bo);
 
    brw_bo_unreference(brw->vs.base.push_const_bo);
    brw_bo_unreference(brw->tcs.base.push_const_bo);
@@ -1075,6 +1127,8 @@ intelDestroyContext(__DRIcontext * driContextPriv)
    brw->throttle_batch[0] = NULL;
 
    driDestroyOptionCache(&brw->optionCache);
+
+   disk_cache_destroy(brw->ctx.Cache);
 
    /* free the Mesa context */
    _mesa_free_context_data(&brw->ctx);
@@ -1117,8 +1171,8 @@ intelUnbindContext(__DRIcontext * driContextPriv)
  *
  * Unfortunately, renderbuffer setup happens before a context is created.  So
  * in intel_screen.c we always set up sRGB, and here, if you're a GLES2/3
- * context (without an sRGB visual, though we don't have sRGB visuals exposed
- * yet), we go turn that back off before anyone finds out.
+ * context (without an sRGB visual), we go turn that back off before anyone
+ * finds out.
  */
 static void
 intel_gles3_srgb_workaround(struct brw_context *brw,
@@ -1129,15 +1183,19 @@ intel_gles3_srgb_workaround(struct brw_context *brw,
    if (_mesa_is_desktop_gl(ctx) || !fb->Visual.sRGBCapable)
       return;
 
-   /* Some day when we support the sRGB capable bit on visuals available for
-    * GLES, we'll need to respect that and not disable things here.
-    */
-   fb->Visual.sRGBCapable = false;
    for (int i = 0; i < BUFFER_COUNT; i++) {
       struct gl_renderbuffer *rb = fb->Attachment[i].Renderbuffer;
+
+      /* Check if sRGB was specifically asked for. */
+      struct intel_renderbuffer *irb = intel_get_renderbuffer(fb, i);
+      if (irb && irb->need_srgb)
+         return;
+
       if (rb)
          rb->Format = _mesa_get_srgb_format_linear(rb->Format);
    }
+   /* Disable sRGB from framebuffers that are not compatible. */
+   fb->Visual.sRGBCapable = false;
 }
 
 GLboolean
@@ -1146,20 +1204,11 @@ intelMakeCurrent(__DRIcontext * driContextPriv,
                  __DRIdrawable * driReadPriv)
 {
    struct brw_context *brw;
-   GET_CURRENT_CONTEXT(curCtx);
 
    if (driContextPriv)
       brw = (struct brw_context *) driContextPriv->driverPrivate;
    else
       brw = NULL;
-
-   /* According to the glXMakeCurrent() man page: "Pending commands to
-    * the previous context, if any, are flushed before it is released."
-    * But only flush if we're actually changing contexts.
-    */
-   if (brw_context(curCtx) && brw_context(curCtx) != brw) {
-      _mesa_flush(curCtx);
-   }
 
    if (driContextPriv) {
       struct gl_context *ctx = &brw->ctx;
@@ -1204,7 +1253,9 @@ void
 intel_resolve_for_dri2_flush(struct brw_context *brw,
                              __DRIdrawable *drawable)
 {
-   if (brw->gen < 6) {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   if (devinfo->gen < 6) {
       /* MSAA and fast color clear are not supported, so don't waste time
        * checking whether a resolve is needed.
        */
@@ -1229,9 +1280,24 @@ intel_resolve_for_dri2_flush(struct brw_context *brw,
       if (rb->mt->surf.samples == 1) {
          assert(rb->mt_layer == 0 && rb->mt_level == 0 &&
                 rb->layer_count == 1);
-         intel_miptree_prepare_access(brw, rb->mt, 0, 1, 0, 1, false, false);
+         intel_miptree_prepare_external(brw, rb->mt);
       } else {
          intel_renderbuffer_downsample(brw, rb);
+
+         /* Call prepare_external on the single-sample miptree to do any
+          * needed resolves prior to handing it off to the window system.
+          * This is needed in the case that rb->singlesample_mt is Y-tiled
+          * with CCS_E enabled but without I915_FORMAT_MOD_Y_TILED_CCS_E.  In
+          * this case, the MSAA resolve above will write compressed data into
+          * rb->singlesample_mt.
+          *
+          * TODO: Some day, if we decide to care about the tiny performance
+          * hit we're taking by doing the MSAA resolve and then a CCS resolve,
+          * we could detect this case and just allocate the single-sampled
+          * miptree without aux.  However, that would be a lot of plumbing and
+          * this is a rather exotic case so it's not really worth it.
+          */
+         intel_miptree_prepare_external(brw, rb->singlesample_mt);
       }
    }
 }
@@ -1516,6 +1582,9 @@ intel_process_dri2_buffer(struct brw_context *brw,
       return;
    }
 
+   uint32_t tiling, swizzle;
+   brw_bo_get_tiling(bo, &tiling, &swizzle);
+
    struct intel_mipmap_tree *mt =
       intel_miptree_create_for_bo(brw,
                                   bo,
@@ -1525,6 +1594,7 @@ intel_process_dri2_buffer(struct brw_context *brw,
                                   drawable->h,
                                   1,
                                   buffer->pitch,
+                                  isl_tiling_from_i915_tiling(tiling),
                                   MIPTREE_CREATE_DEFAULT);
    if (!mt) {
       brw_bo_unreference(bo);
@@ -1599,21 +1669,9 @@ intel_update_image_buffer(struct brw_context *intel,
    if (last_mt && last_mt->bo == buffer->bo)
       return;
 
-   enum isl_colorspace colorspace;
-   switch (_mesa_get_format_color_encoding(intel_rb_format(rb))) {
-   case GL_SRGB:
-      colorspace = ISL_COLORSPACE_SRGB;
-      break;
-   case GL_LINEAR:
-      colorspace = ISL_COLORSPACE_LINEAR;
-      break;
-   default:
-      unreachable("Invalid color encoding");
-   }
-
    struct intel_mipmap_tree *mt =
       intel_miptree_create_for_dri_image(intel, buffer, GL_TEXTURE_2D,
-                                         colorspace, true);
+                                         intel_rb_format(rb), true);
    if (!mt)
       return;
 

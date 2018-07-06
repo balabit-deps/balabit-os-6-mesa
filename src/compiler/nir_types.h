@@ -48,6 +48,8 @@ const struct glsl_type *glsl_get_struct_field(const struct glsl_type *type,
 
 const struct glsl_type *glsl_get_array_element(const struct glsl_type *type);
 const struct glsl_type *glsl_without_array(const struct glsl_type *type);
+const struct glsl_type *glsl_get_array_instance(const struct glsl_type *type,
+                                                unsigned array_size);
 
 const struct glsl_type *glsl_get_column_type(const struct glsl_type *type);
 
@@ -92,9 +94,16 @@ glsl_get_bit_size(const struct glsl_type *type)
    case GLSL_TYPE_SUBROUTINE:
       return 32;
 
+   case GLSL_TYPE_FLOAT16:
+   case GLSL_TYPE_UINT16:
+   case GLSL_TYPE_INT16:
+      return 16;
+
    case GLSL_TYPE_DOUBLE:
    case GLSL_TYPE_INT64:
    case GLSL_TYPE_UINT64:
+   case GLSL_TYPE_IMAGE:
+   case GLSL_TYPE_SAMPLER:
       return 64;
 
    default:
@@ -104,6 +113,7 @@ glsl_get_bit_size(const struct glsl_type *type)
    return 0;
 }
 
+bool glsl_type_is_64bit(const struct glsl_type *type);
 bool glsl_type_is_void(const struct glsl_type *type);
 bool glsl_type_is_error(const struct glsl_type *type);
 bool glsl_type_is_vector(const struct glsl_type *type);
@@ -123,14 +133,18 @@ bool glsl_sampler_type_is_array(const struct glsl_type *type);
 
 const struct glsl_type *glsl_void_type(void);
 const struct glsl_type *glsl_float_type(void);
+const struct glsl_type *glsl_float16_t_type(void);
 const struct glsl_type *glsl_double_type(void);
 const struct glsl_type *glsl_vec_type(unsigned n);
 const struct glsl_type *glsl_dvec_type(unsigned n);
 const struct glsl_type *glsl_vec4_type(void);
+const struct glsl_type *glsl_uvec4_type(void);
 const struct glsl_type *glsl_int_type(void);
 const struct glsl_type *glsl_uint_type(void);
 const struct glsl_type *glsl_int64_t_type(void);
 const struct glsl_type *glsl_uint64_t_type(void);
+const struct glsl_type *glsl_int16_t_type(void);
+const struct glsl_type *glsl_uint16_t_type(void);
 const struct glsl_type *glsl_bool_type(void);
 
 const struct glsl_type *glsl_scalar_type(enum glsl_base_type base_type);
@@ -159,6 +173,8 @@ const struct glsl_type * glsl_function_type(const struct glsl_type *return_type,
                                             unsigned num_params);
 
 const struct glsl_type *glsl_transposed_type(const struct glsl_type *type);
+
+const struct glsl_type *glsl_channel_type(const struct glsl_type *type);
 
 #ifdef __cplusplus
 }

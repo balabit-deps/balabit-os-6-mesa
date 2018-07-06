@@ -80,6 +80,7 @@ struct ureg_tokens {
 #define UREG_MAX_SYSTEM_VALUE PIPE_MAX_ATTRIBS
 #define UREG_MAX_OUTPUT (4 * PIPE_MAX_SHADER_OUTPUTS)
 #define UREG_MAX_CONSTANT_RANGE 32
+#define UREG_MAX_HW_ATOMIC_RANGE 32
 #define UREG_MAX_IMMEDIATE 4096
 #define UREG_MAX_ADDR 3
 #define UREG_MAX_ARRAY_TEMPS 256
@@ -90,6 +91,15 @@ struct const_decl {
       unsigned last;
    } constant_range[UREG_MAX_CONSTANT_RANGE];
    unsigned nr_constant_ranges;
+};
+
+struct hw_atomic_decl {
+   struct {
+      unsigned first;
+      unsigned last;
+      unsigned array_id;
+   } hw_atomic_range[UREG_MAX_HW_ATOMIC_RANGE];
+   unsigned nr_hw_atomic_ranges;
 };
 
 #define DOMAIN_DECL 0
@@ -180,8 +190,9 @@ struct ureg_program
    unsigned array_temps[UREG_MAX_ARRAY_TEMPS];
    unsigned nr_array_temps;
 
-   struct const_decl const_decls;
-   struct const_decl const_decls2D[PIPE_MAX_CONSTANT_BUFFERS];
+   struct const_decl const_decls[PIPE_MAX_CONSTANT_BUFFERS];
+
+   struct hw_atomic_decl hw_atomic_decls[PIPE_MAX_HW_ATOMIC_BUFFERS];
 
    unsigned properties[TGSI_PROPERTY_COUNT];
 
@@ -507,7 +518,7 @@ ureg_DECL_constant2D(struct ureg_program *ureg,
                      unsigned last,
                      unsigned index2D)
 {
-   struct const_decl *decl = &ureg->const_decls2D[index2D];
+   struct const_decl *decl = &ureg->const_decls[index2D];
 
    assert(index2D < PIPE_MAX_CONSTANT_BUFFERS);
 
@@ -529,7 +540,7 @@ struct ureg_src
 ureg_DECL_constant(struct ureg_program *ureg,
                    unsigned index)
 {
-   struct const_decl *decl = &ureg->const_decls;
+   struct const_decl *decl = &ureg->const_decls[0];
    unsigned minconst = index, maxconst = index;
    unsigned i;
 
@@ -579,7 +590,33 @@ out:
    assert(i < decl->nr_constant_ranges);
    assert(decl->constant_range[i].first <= index);
    assert(decl->constant_range[i].last >= index);
-   return ureg_src_register(TGSI_FILE_CONSTANT, index);
+
+   struct ureg_src src = ureg_src_register(TGSI_FILE_CONSTANT, index);
+   return ureg_src_dimension(src, 0);
+}
+
+
+/* Returns a new hw atomic register.  Keep track of which have been
+ * referred to so that we can emit decls later.
+ */
+void
+ureg_DECL_hw_atomic(struct ureg_program *ureg,
+                    unsigned first,
+                    unsigned last,
+                    unsigned buffer_id,
+                    unsigned array_id)
+{
+   struct hw_atomic_decl *decl = &ureg->hw_atomic_decls[buffer_id];
+
+   if (decl->nr_hw_atomic_ranges < UREG_MAX_HW_ATOMIC_RANGE) {
+      uint i = decl->nr_hw_atomic_ranges++;
+
+      decl->hw_atomic_range[i].first = first;
+      decl->hw_atomic_range[i].last = last;
+      decl->hw_atomic_range[i].array_id = array_id;
+   } else {
+      set_bad(ureg);
+   }
 }
 
 static struct ureg_dst alloc_temporary( struct ureg_program *ureg,
@@ -1500,6 +1537,35 @@ emit_decl_semantic(struct ureg_program *ureg,
    }
 }
 
+static void
+emit_decl_atomic_2d(struct ureg_program *ureg,
+                    unsigned first,
+                    unsigned last,
+                    unsigned index2D,
+                    unsigned array_id)
+{
+   union tgsi_any_token *out = get_tokens(ureg, DOMAIN_DECL, array_id ? 4 : 3);
+
+   out[0].value = 0;
+   out[0].decl.Type = TGSI_TOKEN_TYPE_DECLARATION;
+   out[0].decl.NrTokens = 3;
+   out[0].decl.File = TGSI_FILE_HW_ATOMIC;
+   out[0].decl.UsageMask = TGSI_WRITEMASK_XYZW;
+   out[0].decl.Dimension = 1;
+   out[0].decl.Array = array_id != 0;
+
+   out[1].value = 0;
+   out[1].decl_range.First = first;
+   out[1].decl_range.Last = last;
+
+   out[2].value = 0;
+   out[2].decl_dim.Index2D = index2D;
+
+   if (array_id) {
+      out[3].value = 0;
+      out[3].array.ArrayID = array_id;
+   }
+}
 
 static void
 emit_decl_fs(struct ureg_program *ureg,
@@ -1891,17 +1957,8 @@ static void emit_decls( struct ureg_program *ureg )
          emit_decl_memory(ureg, i);
    }
 
-   if (ureg->const_decls.nr_constant_ranges) {
-      for (i = 0; i < ureg->const_decls.nr_constant_ranges; i++) {
-         emit_decl_range(ureg,
-                         TGSI_FILE_CONSTANT,
-                         ureg->const_decls.constant_range[i].first,
-                         ureg->const_decls.constant_range[i].last - ureg->const_decls.constant_range[i].first + 1);
-      }
-   }
-
    for (i = 0; i < PIPE_MAX_CONSTANT_BUFFERS; i++) {
-      struct const_decl *decl = &ureg->const_decls2D[i];
+      struct const_decl *decl = &ureg->const_decls[i];
 
       if (decl->nr_constant_ranges) {
          uint j;
@@ -1912,6 +1969,22 @@ static void emit_decls( struct ureg_program *ureg )
                               decl->constant_range[j].first,
                               decl->constant_range[j].last,
                               i);
+         }
+      }
+   }
+
+   for (i = 0; i < PIPE_MAX_HW_ATOMIC_BUFFERS; i++) {
+      struct hw_atomic_decl *decl = &ureg->hw_atomic_decls[i];
+
+      if (decl->nr_hw_atomic_ranges) {
+         uint j;
+
+         for (j = 0; j < decl->nr_hw_atomic_ranges; j++) {
+            emit_decl_atomic_2d(ureg,
+                                decl->hw_atomic_range[j].first,
+                                decl->hw_atomic_range[j].last,
+                                i,
+                                decl->hw_atomic_range[j].array_id);
          }
       }
    }

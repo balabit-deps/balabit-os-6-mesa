@@ -103,7 +103,9 @@ VkResult anv_CreateDescriptorSetLayout(
       if (binding == NULL)
          continue;
 
-      assert(binding->descriptorCount > 0);
+      if (binding->descriptorCount == 0)
+         continue;
+
 #ifndef NDEBUG
       set_layout->binding[b].type = binding->descriptorType;
 #endif
@@ -398,6 +400,19 @@ anv_descriptor_set_layout_size(const struct anv_descriptor_set_layout *layout)
       sizeof(struct anv_descriptor_set) +
       layout->size * sizeof(struct anv_descriptor) +
       layout->buffer_count * sizeof(struct anv_buffer_view);
+}
+
+size_t
+anv_descriptor_set_binding_layout_get_hw_size(const struct anv_descriptor_set_binding_layout *binding)
+{
+   if (!binding->immutable_samplers)
+      return binding->array_size;
+
+   uint32_t total_plane_count = 0;
+   for (uint32_t i = 0; i < binding->array_size; i++)
+      total_plane_count += binding->immutable_samplers[i]->n_planes;
+
+   return total_plane_count;
 }
 
 struct surface_state_free_list_entry {
@@ -877,6 +892,8 @@ VkResult anv_CreateDescriptorUpdateTemplateKHR(
                         VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (template == NULL)
       return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   template->bind_point = pCreateInfo->pipelineBindPoint;
 
    if (pCreateInfo->templateType == VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET_KHR)
       template->set = pCreateInfo->set;

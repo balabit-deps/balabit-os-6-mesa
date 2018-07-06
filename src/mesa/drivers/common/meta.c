@@ -87,6 +87,7 @@
 #include "main/glformats.h"
 #include "util/bitscan.h"
 #include "util/ralloc.h"
+#include "compiler/nir/nir.h"
 
 /** Return offset in bytes of the field within a vertex struct */
 #define OFFSET(FIELD) ((void *) offsetof(struct vertex, FIELD))
@@ -97,7 +98,8 @@ meta_clear(struct gl_context *ctx, GLbitfield buffers, bool glsl);
 static struct blit_shader *
 choose_blit_shader(GLenum target, struct blit_shader_table *table);
 
-static void cleanup_temp_texture(struct temp_texture *tex);
+static void cleanup_temp_texture(struct gl_context *ctx,
+                                 struct temp_texture *tex);
 static void meta_glsl_clear_cleanup(struct gl_context *ctx,
                                     struct clear_state *clear);
 static void meta_decompress_cleanup(struct gl_context *ctx,
@@ -194,6 +196,18 @@ _mesa_meta_compile_and_link_program(struct gl_context *ctx,
       meta_compile_shader_with_debug(ctx, MESA_SHADER_FRAGMENT, fs_source);
 
    _mesa_meta_link_program_with_debug(ctx, sh_prog);
+
+   struct gl_program *fp =
+      sh_prog->_LinkedShaders[MESA_SHADER_FRAGMENT]->Program;
+
+   /* texelFetch() can break GL_SKIP_DECODE_EXT, but many meta passes want
+    * to use both together; pretend that we're not using texelFetch to hack
+    * around this bad interaction.  This is a bit fragile as it may break
+    * if you re-run the pass that gathers this info, but we probably won't...
+    */
+   fp->info.textures_used_by_txf = 0;
+   if (fp->nir)
+      fp->nir->info.textures_used_by_txf = 0;
 
    _mesa_meta_use_program(ctx, sh_prog);
 
@@ -405,7 +419,7 @@ _mesa_meta_free(struct gl_context *ctx)
    _mesa_meta_glsl_blit_cleanup(ctx, &ctx->Meta->Blit);
    meta_glsl_clear_cleanup(ctx, &ctx->Meta->Clear);
    _mesa_meta_glsl_generate_mipmap_cleanup(ctx, &ctx->Meta->Mipmap);
-   cleanup_temp_texture(&ctx->Meta->TempTex);
+   cleanup_temp_texture(ctx, &ctx->Meta->TempTex);
    meta_decompress_cleanup(ctx, &ctx->Meta->Decompress);
    meta_drawpix_cleanup(ctx, &ctx->Meta->DrawPix);
    if (old_context)
@@ -1230,16 +1244,14 @@ init_temp_texture(struct gl_context *ctx, struct temp_texture *tex)
    tex->MinSize = 16;  /* 16 x 16 at least */
    assert(tex->MaxSize > 0);
 
-   _mesa_GenTextures(1, &tex->TexObj);
+   tex->tex_obj = ctx->Driver.NewTextureObject(ctx, 0xDEADBEEF, tex->Target);
 }
 
 static void
-cleanup_temp_texture(struct temp_texture *tex)
+cleanup_temp_texture(struct gl_context *ctx, struct temp_texture *tex)
 {
-   if (!tex->TexObj)
-     return;
-   _mesa_DeleteTextures(1, &tex->TexObj);
-   tex->TexObj = 0;
+   _mesa_delete_nameless_texture(ctx, tex->tex_obj);
+   tex->tex_obj = NULL;
 }
 
 
@@ -1252,7 +1264,7 @@ _mesa_meta_get_temp_texture(struct gl_context *ctx)
 {
    struct temp_texture *tex = &ctx->Meta->TempTex;
 
-   if (!tex->TexObj) {
+   if (tex->tex_obj == NULL) {
       init_temp_texture(ctx, tex);
    }
 
@@ -1270,7 +1282,7 @@ get_bitmap_temp_texture(struct gl_context *ctx)
 {
    struct temp_texture *tex = &ctx->Meta->Bitmap.Tex;
 
-   if (!tex->TexObj) {
+   if (tex->tex_obj == NULL) {
       init_temp_texture(ctx, tex);
    }
 
@@ -1286,7 +1298,7 @@ _mesa_meta_get_temp_depth_texture(struct gl_context *ctx)
 {
    struct temp_texture *tex = &ctx->Meta->Blit.depthTex;
 
-   if (!tex->TexObj) {
+   if (tex->tex_obj == NULL) {
       init_temp_texture(ctx, tex);
    }
 
@@ -1365,9 +1377,11 @@ _mesa_meta_setup_copypix_texture(struct gl_context *ctx,
 {
    bool newTex;
 
-   _mesa_BindTexture(tex->Target, tex->TexObj);
-   _mesa_TexParameteri(tex->Target, GL_TEXTURE_MIN_FILTER, filter);
-   _mesa_TexParameteri(tex->Target, GL_TEXTURE_MAG_FILTER, filter);
+   _mesa_bind_texture(ctx, tex->Target, tex->tex_obj);
+   _mesa_texture_parameteriv(ctx, tex->tex_obj, GL_TEXTURE_MIN_FILTER,
+                             (GLint *) &filter, false);
+   _mesa_texture_parameteriv(ctx, tex->tex_obj, GL_TEXTURE_MAG_FILTER,
+                             (GLint *) &filter, false);
    _mesa_TexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 
    newTex = _mesa_meta_alloc_texture(tex, width, height, intFormat);
@@ -1409,9 +1423,16 @@ _mesa_meta_setup_drawpix_texture(struct gl_context *ctx,
                                  GLenum format, GLenum type,
                                  const GLvoid *pixels)
 {
-   _mesa_BindTexture(tex->Target, tex->TexObj);
-   _mesa_TexParameteri(tex->Target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-   _mesa_TexParameteri(tex->Target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   /* GLint so the compiler won't complain about type signedness mismatch in
+    * the call to _mesa_texture_parameteriv below.
+    */
+   static const GLint filter = GL_NEAREST;
+
+   _mesa_bind_texture(ctx, tex->Target, tex->tex_obj);
+   _mesa_texture_parameteriv(ctx, tex->tex_obj, GL_TEXTURE_MIN_FILTER, &filter,
+                             false);
+   _mesa_texture_parameteriv(ctx, tex->tex_obj, GL_TEXTURE_MAG_FILTER, &filter,
+                             false);
    _mesa_TexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 
    /* copy pixel data to texture */
@@ -1642,7 +1663,7 @@ _mesa_meta_drawbuffers_and_colormask(struct gl_context *ctx, GLbitfield mask)
    enums[0] = GL_NONE;
 
    for (int i = 0; i < ctx->DrawBuffer->_NumColorDrawBuffers; i++) {
-      int b = ctx->DrawBuffer->_ColorDrawBufferIndexes[i];
+      gl_buffer_index b = ctx->DrawBuffer->_ColorDrawBufferIndexes[i];
       int colormask_idx = ctx->Extensions.EXT_draw_buffers2 ? i : 0;
 
       if (b < 0 || !(mask & (1 << b)) || is_color_disabled(ctx, colormask_idx))
@@ -3146,7 +3167,7 @@ decompress_texture_image(struct gl_context *ctx,
    _mesa_buffer_sub_data(ctx, decompress->buf_obj, 0, sizeof(verts), verts);
 
    /* setup texture state */
-   _mesa_BindTexture(target, texObj->Name);
+   _mesa_bind_texture(ctx, target, texObj);
 
    if (!use_glsl_version)
       _mesa_set_enable(ctx, target, GL_TRUE);

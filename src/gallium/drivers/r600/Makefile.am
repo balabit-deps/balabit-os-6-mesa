@@ -27,8 +27,7 @@ libr600_la_SOURCES = \
 if HAVE_GALLIUM_LLVM
 
 AM_CFLAGS += \
-	$(LLVM_CFLAGS) \
-	-I$(top_srcdir)/src/gallium/drivers/radeon/
+	$(LLVM_CFLAGS)
 
 endif
 
@@ -43,4 +42,5 @@ CLEANFILES = \
 EXTRA_DIST = \
 	egd_tables.py \
 	sb/notes.markdown \
-	sb/sb_bc_fmt_def.inc
+	sb/sb_bc_fmt_def.inc \
+	meson.build

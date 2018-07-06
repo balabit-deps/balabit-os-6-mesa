@@ -111,7 +111,7 @@ intel_finalize_mipmap_tree(struct brw_context *brw, GLuint unit)
     *
     * FINISHME: Avoid doing this.
     */
-   assert(!tObj->Immutable || brw->gen < 6);
+   assert(!tObj->Immutable || brw->screen->devinfo.gen < 6);
 
    firstImage = intel_texture_image(tObj->Image[0][tObj->BaseLevel]);
 
@@ -161,10 +161,8 @@ intel_finalize_mipmap_tree(struct brw_context *brw, GLuint unit)
  	 if (intelImage == NULL)
 		 break;
 
-         if (intelObj->mt != intelImage->mt) {
-            intel_miptree_copy_teximage(brw, intelImage, intelObj->mt,
-                                        false /* invalidate */);
-         }
+         if (intelObj->mt != intelImage->mt)
+            intel_miptree_copy_teximage(brw, intelImage, intelObj->mt);
 
          /* After we're done, we'd better agree that our layout is
           * appropriate, or we'll end up hitting this function again on the

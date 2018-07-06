@@ -59,7 +59,7 @@ __gen_uint(uint64_t v, uint32_t start, uint32_t end)
 {
    __gen_validate_value(v);
 
-#if DEBUG
+#ifndef NDEBUG
    const int width = end - start + 1;
    if (width < 64) {
       const uint64_t max = (1ull << width) - 1;
@@ -77,7 +77,7 @@ __gen_sint(int64_t v, uint32_t start, uint32_t end)
 
    __gen_validate_value(v);
 
-#if DEBUG
+#ifndef NDEBUG
    if (width < 64) {
       const int64_t max = (1ll << (width - 1)) - 1;
       const int64_t min = -(1ll << (width - 1));
@@ -94,7 +94,7 @@ static inline uint64_t
 __gen_offset(uint64_t v, uint32_t start, uint32_t end)
 {
    __gen_validate_value(v);
-#if DEBUG
+#ifndef NDEBUG
    uint64_t mask = (~0ull >> (64 - (end - start + 1))) << start;
 
    assert((v & ~mask) == 0);
@@ -117,7 +117,7 @@ __gen_sfixed(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
 
    const float factor = (1 << fract_bits);
 
-#if DEBUG
+#ifndef NDEBUG
    const float max = ((1 << (end - start)) - 1) / factor;
    const float min = -(1 << (end - start)) / factor;
    assert(min <= v && v <= max);
@@ -136,7 +136,7 @@ __gen_ufixed(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
 
    const float factor = (1 << fract_bits);
 
-#if DEBUG
+#ifndef NDEBUG
    const float max = ((1 << (end - start + 1)) - 1) / factor;
    const float min = 0.0f;
    assert(min <= v && v <= max);
@@ -1239,7 +1239,12 @@ struct GEN75_RENDER_SURFACE_STATE {
 #define NORMAL_MODE                              0
 #define PROGRESSIVE_FRAME                        2
 #define INTERLACED_FRAME                         3
-   uint32_t                             CubeFaceEnables;
+   bool                                 CubeFaceEnablePositiveZ;
+   bool                                 CubeFaceEnableNegativeZ;
+   bool                                 CubeFaceEnablePositiveY;
+   bool                                 CubeFaceEnableNegativeY;
+   bool                                 CubeFaceEnablePositiveX;
+   bool                                 CubeFaceEnableNegativeX;
    __gen_address_type                   SurfaceBaseAddress;
    uint32_t                             Height;
    uint32_t                             Width;
@@ -1306,7 +1311,12 @@ GEN75_RENDER_SURFACE_STATE_pack(__attribute__((unused)) __gen_user_data *data,
       __gen_uint(values->SurfaceArraySpacing, 10, 10) |
       __gen_uint(values->RenderCacheReadWriteMode, 8, 8) |
       __gen_uint(values->MediaBoundaryPixelMode, 6, 7) |
-      __gen_uint(values->CubeFaceEnables, 0, 5);
+      __gen_uint(values->CubeFaceEnablePositiveZ, 0, 0) |
+      __gen_uint(values->CubeFaceEnableNegativeZ, 1, 1) |
+      __gen_uint(values->CubeFaceEnablePositiveY, 2, 2) |
+      __gen_uint(values->CubeFaceEnableNegativeY, 3, 3) |
+      __gen_uint(values->CubeFaceEnablePositiveX, 4, 4) |
+      __gen_uint(values->CubeFaceEnableNegativeX, 5, 5);
 
    dw[1] = __gen_combine_address(data, &dw[1], values->SurfaceBaseAddress, 0);
 
@@ -8159,6 +8169,8 @@ struct GEN75_INSTDONE_1 {
    bool                                 TSGDone;
    bool                                 GAFMDone;
    bool                                 GAMDone;
+   bool                                 RSDone;
+   bool                                 CSDone;
    bool                                 SDEDone;
    bool                                 RCCFBCCSDone;
 };
@@ -8189,6 +8201,8 @@ GEN75_INSTDONE_1_pack(__attribute__((unused)) __gen_user_data *data,
       __gen_uint(values->TSGDone, 17, 17) |
       __gen_uint(values->GAFMDone, 18, 18) |
       __gen_uint(values->GAMDone, 19, 19) |
+      __gen_uint(values->RSDone, 20, 20) |
+      __gen_uint(values->CSDone, 21, 21) |
       __gen_uint(values->SDEDone, 22, 22) |
       __gen_uint(values->RCCFBCCSDone, 23, 23);
 }

@@ -155,13 +155,19 @@ st_renderbuffer_alloc_storage(struct gl_context * ctx,
     *   to <samples> and no more than the next larger sample count supported
     *   by the implementation.
     *
-    * So let's find the supported number of samples closest to NumSamples.
-    * (NumSamples == 1) is treated the same as (NumSamples == 0).
+    * Find the supported number of samples >= rb->NumSamples
     */
-   if (rb->NumSamples > 1) {
-      unsigned i;
+   if (rb->NumSamples > 0) {
+      unsigned start, i;
 
-      for (i = rb->NumSamples; i <= ctx->Const.MaxSamples; i++) {
+      if (ctx->Const.MaxSamples > 1 &&  rb->NumSamples == 1) {
+         /* don't try num_samples = 1 with drivers that support real msaa */
+         start = 2;
+      } else {
+         start = rb->NumSamples;
+      }
+
+      for (i = start; i <= ctx->Const.MaxSamples; i++) {
          format = st_choose_renderbuffer_format(st, internalFormat, i);
 
          if (format != PIPE_FORMAT_NONE) {
@@ -262,7 +268,7 @@ st_new_renderbuffer(struct gl_context *ctx, GLuint name)
  * renderbuffer).  The window system code determines the format.
  */
 struct gl_renderbuffer *
-st_new_renderbuffer_fb(enum pipe_format format, int samples, boolean sw)
+st_new_renderbuffer_fb(enum pipe_format format, unsigned samples, boolean sw)
 {
    struct st_renderbuffer *strb;
 
@@ -280,6 +286,12 @@ st_new_renderbuffer_fb(enum pipe_format format, int samples, boolean sw)
    strb->software = sw;
 
    switch (format) {
+   case PIPE_FORMAT_B10G10R10A2_UNORM:
+      strb->Base.InternalFormat = GL_RGB10_A2;
+      break;
+   case PIPE_FORMAT_B10G10R10X2_UNORM:
+      strb->Base.InternalFormat = GL_RGB10;
+      break;
    case PIPE_FORMAT_R8G8B8A8_UNORM:
    case PIPE_FORMAT_B8G8R8A8_UNORM:
    case PIPE_FORMAT_A8R8G8B8_UNORM:
@@ -715,9 +727,9 @@ st_DrawBuffers(struct gl_context *ctx, GLsizei count, const GLenum *buffers)
       GLuint i;
       /* add the renderbuffers on demand */
       for (i = 0; i < fb->_NumColorDrawBuffers; i++) {
-         GLint idx = fb->_ColorDrawBufferIndexes[i];
+         gl_buffer_index idx = fb->_ColorDrawBufferIndexes[i];
 
-         if (idx >= 0) {
+         if (idx != BUFFER_NONE) {
             st_manager_add_color_renderbuffer(st, fb, idx);
          }
       }

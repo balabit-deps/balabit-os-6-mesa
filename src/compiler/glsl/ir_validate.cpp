@@ -36,6 +36,7 @@
 #include "ir.h"
 #include "ir_hierarchical_visitor.h"
 #include "util/hash_table.h"
+#include "util/macros.h"
 #include "util/set.h"
 #include "compiler/glsl_types.h"
 
@@ -236,6 +237,14 @@ ir_validate::visit_enter(ir_function_signature *ir)
 ir_visitor_status
 ir_validate::visit_leave(ir_expression *ir)
 {
+   for (unsigned i = ir->num_operands; i < 4; i++) {
+      assert(ir->operands[i] == NULL);
+   }
+
+   for (unsigned i = 0; i < ir->num_operands; i++) {
+      assert(ir->operands[i] != NULL);
+   }
+
    switch (ir->operation) {
    case ir_unop_bit_not:
       assert(ir->operands[0]->type == ir->type);
@@ -638,8 +647,6 @@ ir_validate::visit_leave(ir_expression *ir)
       break;
 
    case ir_binop_less:
-   case ir_binop_greater:
-   case ir_binop_lequal:
    case ir_binop_gequal:
    case ir_binop_equal:
    case ir_binop_nequal:
@@ -1035,7 +1042,7 @@ ir_validate::validate_ir(ir_instruction *ir, void *data)
    _mesa_set_add(ir_set, ir);
 }
 
-void
+MAYBE_UNUSED static void
 check_node_type(ir_instruction *ir, void *data)
 {
    (void) data;

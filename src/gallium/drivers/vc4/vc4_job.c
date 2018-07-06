@@ -90,6 +90,8 @@ vc4_job_create(struct vc4_context *vc4)
         job->draw_max_x = 0;
         job->draw_max_y = 0;
 
+        job->last_gem_handle_hindex = ~0;
+
         return job;
 }
 
@@ -263,6 +265,13 @@ vc4_get_job_for_fbo(struct vc4_context *vc4)
                                          job->tile_width);
         job->draw_tiles_y = DIV_ROUND_UP(vc4->framebuffer.height,
                                          job->tile_height);
+
+        /* Initialize the job with the raster order flags -- each draw will
+         * check that we haven't changed the flags, since that requires a
+         * flush.
+         */
+        if (vc4->rasterizer)
+                job->flags = vc4->rasterizer->tile_raster_order_flags;
 
         vc4->job = job;
 
@@ -461,6 +470,7 @@ vc4_job_submit(struct vc4_context *vc4, struct vc4_job *job)
                 submit.clear_z = job->clear_depth;
                 submit.clear_s = job->clear_stencil;
         }
+        submit.flags |= job->flags;
 
         if (!(vc4_debug & VC4_DEBUG_NORAST)) {
                 int ret;

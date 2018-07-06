@@ -28,6 +28,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Intel hardware information and quirks
  */
@@ -193,9 +197,13 @@ struct gen_device_info
 };
 
 #define gen_device_info_is_9lp(devinfo) \
-   (devinfo->is_broxton || devinfo->is_geminilake)
+   ((devinfo)->is_broxton || (devinfo)->is_geminilake)
 
 bool gen_get_device_info(int devid, struct gen_device_info *devinfo);
 const char *gen_get_device_name(int devid);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* GEN_DEVICE_INFO_H */

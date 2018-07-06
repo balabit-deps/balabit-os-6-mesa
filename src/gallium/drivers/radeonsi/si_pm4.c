@@ -19,9 +19,6 @@
  * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * Authors:
- *      Christian König <christian.koenig@amd.com>
  */
 
 #include "radeon/r600_cs.h"
@@ -169,14 +166,16 @@ void si_pm4_upload_indirect_buffer(struct si_context *sctx,
 	assert(aligned_ndw <= SI_PM4_MAX_DW);
 
 	r600_resource_reference(&state->indirect_buffer, NULL);
+	/* TODO: this hangs with 1024 or higher alignment on GFX9. */
 	state->indirect_buffer = (struct r600_resource*)
-		pipe_buffer_create(screen, 0,
-				   PIPE_USAGE_DEFAULT, aligned_ndw * 4);
+		si_aligned_buffer_create(screen, 0,
+					 PIPE_USAGE_DEFAULT, aligned_ndw * 4,
+					 256);
 	if (!state->indirect_buffer)
 		return;
 
 	/* Pad the IB to 8 DWs to meet CP fetch alignment requirements. */
-	if (sctx->screen->b.info.gfx_ib_pad_with_type2) {
+	if (sctx->screen->info.gfx_ib_pad_with_type2) {
 		for (int i = state->ndw; i < aligned_ndw; i++)
 			state->pm4[i] = 0x80000000; /* type2 nop packet */
 	} else {

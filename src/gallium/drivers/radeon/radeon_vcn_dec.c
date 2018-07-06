@@ -35,7 +35,7 @@
 
 #include "vl/vl_mpeg12_decoder.h"
 
-#include "r600_pipe_common.h"
+#include "radeonsi/si_pipe.h"
 #include "radeon_video.h"
 #include "radeon_vcn_dec.h"
 
@@ -78,6 +78,7 @@ struct radeon_decoder {
 
 	unsigned			bs_size;
 	unsigned			cur_buffer;
+	void				*render_pic_list[16];
 };
 
 static rvcn_dec_message_avc_t get_h264_msg(struct radeon_decoder *dec,
@@ -186,7 +187,7 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
 					struct pipe_h265_picture_desc *pic)
 {
 	rvcn_dec_message_hevc_t result;
-	unsigned i;
+	unsigned i, j;
 
 	memset(&result, 0, sizeof(result));
 	result.sps_info_flags = 0;
@@ -199,7 +200,7 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
 	result.sps_info_flags |= pic->pps->sps->sps_temporal_mvp_enabled_flag << 6;
 	result.sps_info_flags |= pic->pps->sps->strong_intra_smoothing_enabled_flag << 7;
 	result.sps_info_flags |= pic->pps->sps->separate_colour_plane_flag << 8;
-	if (((struct r600_common_screen*)dec->screen)->family == CHIP_CARRIZO)
+	if (((struct si_screen*)dec->screen)->info.family == CHIP_CARRIZO)
 		result.sps_info_flags |= 1 << 9;
 	if (pic->UseRefPicList == true)
 		result.sps_info_flags |= 1 << 10;
@@ -273,11 +274,28 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
 		result.row_height_minus1[i] = pic->pps->row_height_minus1[i];
 
 	result.num_delta_pocs_ref_rps_idx = pic->NumDeltaPocsOfRefRpsIdx;
-	result.curr_idx = pic->CurrPicOrderCntVal;
 	result.curr_poc = pic->CurrPicOrderCntVal;
 
+	for (i = 0 ; i < 16 ; i++) {
+		for (j = 0; (pic->ref[j] != NULL) && (j < 16) ; j++) {
+			if (dec->render_pic_list[i] == pic->ref[j])
+				break;
+			if (j == 15)
+				dec->render_pic_list[i] = NULL;
+			else if (pic->ref[j+1] == NULL)
+				dec->render_pic_list[i] = NULL;
+		}
+	}
+	for (i = 0 ; i < 16 ; i++) {
+		if (dec->render_pic_list[i] == NULL) {
+			dec->render_pic_list[i] = target;
+			result.curr_idx = i;
+			break;
+		}
+	}
+
 	vl_video_buffer_set_associated_data(target, &dec->base,
-					    (void *)(uintptr_t)pic->CurrPicOrderCntVal,
+					    (void *)(uintptr_t)result.curr_idx,
 					    &radeon_dec_destroy_associated_data);
 
 	for (i = 0; i < 16; ++i) {
@@ -320,17 +338,21 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
 	memcpy(dec->it + 864, pic->pps->sps->ScalingList32x32, 2 * 64);
 
 	for (i = 0 ; i < 2 ; i++) {
-		for (int j = 0 ; j < 15 ; j++)
+		for (j = 0 ; j < 15 ; j++)
 			result.direct_reflist[i][j] = pic->RefPicList[i][j];
 	}
 
-	if ((pic->base.profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10) &&
-		(target->buffer_format == PIPE_FORMAT_NV12)) {
-		result.p010_mode = 0;
-		result.luma_10to8 = 5;
-		result.chroma_10to8 = 5;
-		result.hevc_reserved[0] = 4; /* sclr_luma10to8 */
-		result.hevc_reserved[1] = 4; /* sclr_chroma10to8 */
+	if (pic->base.profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10) {
+		if (target->buffer_format == PIPE_FORMAT_P016) {
+			result.p010_mode = 1;
+			result.msb_mode = 1;
+		} else {
+			result.p010_mode = 0;
+			result.luma_10to8 = 5;
+			result.chroma_10to8 = 5;
+			result.hevc_reserved[0] = 4; /* sclr_luma10to8 */
+			result.hevc_reserved[1] = 4; /* sclr_chroma10to8 */
+		}
 	}
 
 	return result;
@@ -476,12 +498,17 @@ static rvcn_dec_message_mpeg2_vld_t get_mpeg2_msg(struct radeon_decoder *dec,
 	result.forward_ref_pic_idx = get_ref_pic_idx(dec, pic->ref[0]);
 	result.backward_ref_pic_idx = get_ref_pic_idx(dec, pic->ref[1]);
 
-	result.load_intra_quantiser_matrix = 1;
-	result.load_nonintra_quantiser_matrix = 1;
-
-	for (i = 0; i < 64; ++i) {
-		result.intra_quantiser_matrix[i] = pic->intra_matrix[zscan[i]];
-		result.nonintra_quantiser_matrix[i] = pic->non_intra_matrix[zscan[i]];
+	if(pic->intra_matrix) {
+		result.load_intra_quantiser_matrix = 1;
+		for (i = 0; i < 64; ++i) {
+			result.intra_quantiser_matrix[i] = pic->intra_matrix[zscan[i]];
+		}
+	}
+	if(pic->non_intra_matrix) {
+		result.load_nonintra_quantiser_matrix = 1;
+		for (i = 0; i < 64; ++i) {
+			result.nonintra_quantiser_matrix[i] = pic->non_intra_matrix[zscan[i]];
+		}
 	}
 
 	result.profile_and_level_indication = 0;
@@ -527,15 +554,15 @@ static rvcn_dec_message_mpeg4_asp_vld_t get_mpeg4_msg(struct radeon_decoder *dec
 
 	result.vop_time_increment_resolution = pic->vop_time_increment_resolution;
 
-	result.short_video_header |= pic->short_video_header << 0;
-	result.interlaced |= pic->interlaced << 2;
-        result.load_intra_quant_mat |= 1 << 3;
-	result.load_nonintra_quant_mat |= 1 << 4;
-	result.quarter_sample |= pic->quarter_sample << 5;
-	result.complexity_estimation_disable |= 1 << 6;
-	result.resync_marker_disable |= pic->resync_marker_disable << 7;
-	result.newpred_enable |= 0 << 10; //
-	result.reduced_resolution_vop_enable |= 0 << 11;
+	result.short_video_header = pic->short_video_header;
+	result.interlaced = pic->interlaced;
+	result.load_intra_quant_mat = 1;
+	result.load_nonintra_quant_mat = 1;
+	result.quarter_sample = pic->quarter_sample;
+	result.complexity_estimation_disable = 1;
+	result.resync_marker_disable = pic->resync_marker_disable;
+	result.newpred_enable = 0;
+	result.reduced_resolution_vop_enable = 0;
 
 	result.quant_type = pic->quant_type;
 
@@ -613,10 +640,10 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
 	index->size = sizeof(rvcn_dec_message_avc_t);
 	index->filled = 0;
 
-	decode->stream_type = dec->stream_type;;
+	decode->stream_type = dec->stream_type;
 	decode->decode_flags = 0x1;
-	decode->width_in_samples = dec->base.width;;
-	decode->height_in_samples = dec->base.height;;
+	decode->width_in_samples = dec->base.width;
+	decode->height_in_samples = dec->base.height;
 
 	decode->bsd_size = align(dec->bs_size, 128);
 	decode->dpb_size = dec->dpb.res->buf->size;
@@ -631,7 +658,7 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
 	decode->db_pitch = align(dec->base.width, 32);
 	decode->db_surf_tile_config = 0;
 
-	decode->dt_pitch = luma->surface.u.gfx9.surf_pitch * luma->surface.bpe;;
+	decode->dt_pitch = luma->surface.u.gfx9.surf_pitch * luma->surface.blk_w;
 	decode->dt_uv_pitch = decode->dt_pitch / 2;
 
 	decode->dt_tiling_mode = 0;
@@ -674,9 +701,9 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
 					(struct pipe_h265_picture_desc*)picture);
 			else
 				ctx_size = calc_ctx_size_h265_main(dec);
-			if (!rvid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT))
+			if (!si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT))
 				RVID_ERR("Can't allocated context buffer.\n");
-			rvid_clear_buffer(dec->base.context, &dec->ctx);
+			si_vid_clear_buffer(dec->base.context, &dec->ctx);
 		}
 		break;
 	}
@@ -1022,13 +1049,13 @@ static void radeon_dec_destroy(struct pipe_video_codec *decoder)
 	dec->ws->cs_destroy(dec->cs);
 
 	for (i = 0; i < NUM_BUFFERS; ++i) {
-		rvid_destroy_buffer(&dec->msg_fb_it_buffers[i]);
-		rvid_destroy_buffer(&dec->bs_buffers[i]);
+		si_vid_destroy_buffer(&dec->msg_fb_it_buffers[i]);
+		si_vid_destroy_buffer(&dec->bs_buffers[i]);
 	}
 
-	rvid_destroy_buffer(&dec->dpb);
-	rvid_destroy_buffer(&dec->ctx);
-	rvid_destroy_buffer(&dec->sessionctx);
+	si_vid_destroy_buffer(&dec->dpb);
+	si_vid_destroy_buffer(&dec->ctx);
+	si_vid_destroy_buffer(&dec->sessionctx);
 
 	FREE(dec);
 }
@@ -1092,7 +1119,7 @@ static void radeon_dec_decode_bitstream(struct pipe_video_codec *decoder,
 
 		if (new_size > buf->res->buf->size) {
 			dec->ws->buffer_unmap(buf->res->buf);
-			if (!rvid_resize_buffer(dec->screen, dec->cs, buf, new_size)) {
+			if (!si_vid_resize_buffer(dec->screen, dec->cs, buf, new_size)) {
 				RVID_ERR("Can't resize bitstream buffer!");
 				return;
 			}
@@ -1154,7 +1181,7 @@ static void radeon_dec_end_frame(struct pipe_video_codec *decoder,
 			 FB_BUFFER_OFFSET + FB_BUFFER_SIZE, RADEON_USAGE_READ, RADEON_DOMAIN_GTT);
 	set_reg(dec, RDECODE_ENGINE_CNTL, 1);
 
-	flush(dec, RADEON_FLUSH_ASYNC);
+	flush(dec, PIPE_FLUSH_ASYNC);
 	next_buffer(dec);
 }
 
@@ -1223,7 +1250,7 @@ struct pipe_video_codec *radeon_create_decoder(struct pipe_context *context,
 	dec->base.flush = radeon_dec_flush;
 
 	dec->stream_type = stream_type;
-	dec->stream_handle = rvid_alloc_stream_handle();
+	dec->stream_handle = si_vid_alloc_stream_handle();
 	dec->screen = context->screen;
 	dec->ws = ws;
 	dec->cs = ws->cs_create(rctx->ctx, RING_VCN_DEC, NULL, NULL);
@@ -1232,52 +1259,55 @@ struct pipe_video_codec *radeon_create_decoder(struct pipe_context *context,
 		goto error;
 	}
 
+	for (i = 0; i < 16; i++)
+		dec->render_pic_list[i] = NULL;
 	bs_buf_size = width * height * (512 / (16 * 16));
 	for (i = 0; i < NUM_BUFFERS; ++i) {
 		unsigned msg_fb_it_size = FB_BUFFER_OFFSET + FB_BUFFER_SIZE;
 		if (have_it(dec))
 			msg_fb_it_size += IT_SCALING_TABLE_SIZE;
-		if (!rvid_create_buffer(dec->screen, &dec->msg_fb_it_buffers[i],
-					msg_fb_it_size, PIPE_USAGE_STAGING)) {
+		/* use vram to improve performance, workaround an unknown bug */
+		if (!si_vid_create_buffer(dec->screen, &dec->msg_fb_it_buffers[i],
+                                          msg_fb_it_size, PIPE_USAGE_DEFAULT)) {
 			RVID_ERR("Can't allocated message buffers.\n");
 			goto error;
 		}
 
-		if (!rvid_create_buffer(dec->screen, &dec->bs_buffers[i],
-					bs_buf_size, PIPE_USAGE_STAGING)) {
+		if (!si_vid_create_buffer(dec->screen, &dec->bs_buffers[i],
+                                          bs_buf_size, PIPE_USAGE_STAGING)) {
 			RVID_ERR("Can't allocated bitstream buffers.\n");
 			goto error;
 		}
 
-		rvid_clear_buffer(context, &dec->msg_fb_it_buffers[i]);
-		rvid_clear_buffer(context, &dec->bs_buffers[i]);
+		si_vid_clear_buffer(context, &dec->msg_fb_it_buffers[i]);
+		si_vid_clear_buffer(context, &dec->bs_buffers[i]);
 	}
 
 	dpb_size = calc_dpb_size(dec);
 
-	if (!rvid_create_buffer(dec->screen, &dec->dpb, dpb_size, PIPE_USAGE_DEFAULT)) {
+	if (!si_vid_create_buffer(dec->screen, &dec->dpb, dpb_size, PIPE_USAGE_DEFAULT)) {
 		RVID_ERR("Can't allocated dpb.\n");
 		goto error;
 	}
 
-	rvid_clear_buffer(context, &dec->dpb);
+	si_vid_clear_buffer(context, &dec->dpb);
 
 	if (dec->stream_type == RDECODE_CODEC_H264_PERF) {
 		unsigned ctx_size = calc_ctx_size_h264_perf(dec);
-		if (!rvid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT)) {
+		if (!si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT)) {
 			RVID_ERR("Can't allocated context buffer.\n");
 			goto error;
 		}
-		rvid_clear_buffer(context, &dec->ctx);
+		si_vid_clear_buffer(context, &dec->ctx);
 	}
 
-	if (!rvid_create_buffer(dec->screen, &dec->sessionctx,
-				RDECODE_SESSION_CONTEXT_SIZE,
-				PIPE_USAGE_DEFAULT)) {
+	if (!si_vid_create_buffer(dec->screen, &dec->sessionctx,
+                                  RDECODE_SESSION_CONTEXT_SIZE,
+                                  PIPE_USAGE_DEFAULT)) {
 		RVID_ERR("Can't allocated session ctx.\n");
 		goto error;
 	}
-	rvid_clear_buffer(context, &dec->sessionctx);
+	si_vid_clear_buffer(context, &dec->sessionctx);
 
 	map_msg_fb_it_buf(dec);
 	rvcn_dec_message_create(dec);
@@ -1294,13 +1324,13 @@ error:
 	if (dec->cs) dec->ws->cs_destroy(dec->cs);
 
 	for (i = 0; i < NUM_BUFFERS; ++i) {
-		rvid_destroy_buffer(&dec->msg_fb_it_buffers[i]);
-		rvid_destroy_buffer(&dec->bs_buffers[i]);
+		si_vid_destroy_buffer(&dec->msg_fb_it_buffers[i]);
+		si_vid_destroy_buffer(&dec->bs_buffers[i]);
 	}
 
-	rvid_destroy_buffer(&dec->dpb);
-	rvid_destroy_buffer(&dec->ctx);
-	rvid_destroy_buffer(&dec->sessionctx);
+	si_vid_destroy_buffer(&dec->dpb);
+	si_vid_destroy_buffer(&dec->ctx);
+	si_vid_destroy_buffer(&dec->sessionctx);
 
 	FREE(dec);
 

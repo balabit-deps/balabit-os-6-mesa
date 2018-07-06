@@ -101,8 +101,9 @@ set_blitter_tiling(struct brw_context *brw,
                    bool dst_y_tiled, bool src_y_tiled,
                    uint32_t *__map)
 {
-   const unsigned n_dwords = brw->gen >= 8 ? 5 : 4;
-   assert(brw->gen >= 6);
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+   const unsigned n_dwords = devinfo->gen >= 8 ? 5 : 4;
+   assert(devinfo->gen >= 6);
 
    /* Idle the blitter before we update how tiling is interpreted. */
    OUT_BATCH(MI_FLUSH_DW | (n_dwords - 2));
@@ -124,7 +125,7 @@ set_blitter_tiling(struct brw_context *brw,
 #define BEGIN_BATCH_BLT_TILED(n, dst_y_tiled, src_y_tiled)              \
       unsigned set_tiling_batch_size = 0;                               \
       if (dst_y_tiled || src_y_tiled) {                                 \
-         if (brw->gen >= 8)                                             \
+         if (devinfo->gen >= 8)                                         \
             set_tiling_batch_size = 16;                                 \
          else                                                           \
             set_tiling_batch_size = 14;                                 \
@@ -168,6 +169,19 @@ intel_miptree_blit_compatible_formats(mesa_format src, mesa_format dst)
    if (src == MESA_FORMAT_R8G8B8A8_UNORM || src == MESA_FORMAT_R8G8B8X8_UNORM)
       return (dst == MESA_FORMAT_R8G8B8A8_UNORM ||
               dst == MESA_FORMAT_R8G8B8X8_UNORM);
+
+   /* We can also discard alpha when going from A2->X2 for 2 bit alpha,
+    * however we can't fill the alpha channel with two 1 bits when going
+    * from X2->A2, because intel_miptree_set_alpha_to_one() is not yet
+    * ready for this / can only handle 8 bit alpha.
+    */
+   if (src == MESA_FORMAT_B10G10R10A2_UNORM)
+      return (dst == MESA_FORMAT_B10G10R10A2_UNORM ||
+              dst == MESA_FORMAT_B10G10R10X2_UNORM);
+
+   if (src == MESA_FORMAT_R10G10B10A2_UNORM)
+      return (dst == MESA_FORMAT_R10G10B10A2_UNORM ||
+              dst == MESA_FORMAT_R10G10B10X2_UNORM);
 
    return false;
 }
@@ -321,7 +335,8 @@ intel_miptree_blit(struct brw_context *brw,
    /* The blitter doesn't support doing any format conversions.  We do also
     * support blitting ARGB8888 to XRGB8888 (trivial, the values dropped into
     * the X channel don't matter), and XRGB8888 to ARGB8888 by setting the A
-    * channel to 1.0 at the end.
+    * channel to 1.0 at the end. Also trivially ARGB2101010 to XRGB2101010,
+    * but not XRGB2101010 to ARGB2101010 yet.
     */
    if (!intel_miptree_blit_compatible_formats(src_format, dst_format)) {
       perf_debug("%s: Can't use hardware blitter from %s to %s, "
@@ -341,7 +356,7 @@ intel_miptree_blit(struct brw_context *brw,
       const unsigned h0 = src_mt->surf.phys_level0_sa.height;
       src_y = minify(h0, src_level - src_mt->first_level) - src_y - height;
    }
- 
+
    if (dst_flip) {
       const unsigned h0 = dst_mt->surf.phys_level0_sa.height;
       dst_y = minify(h0, dst_level - dst_mt->first_level) - dst_y - height;
@@ -455,12 +470,14 @@ static bool
 alignment_valid(struct brw_context *brw, unsigned offset,
                 enum isl_tiling tiling)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
    /* Tiled buffers must be page-aligned (4K). */
    if (tiling != ISL_TILING_LINEAR)
       return (offset & 4095) == 0;
 
    /* On Gen8+, linear buffers must be cacheline-aligned. */
-   if (brw->gen >= 8)
+   if (devinfo->gen >= 8)
       return (offset & 63) == 0;
 
    return true;
@@ -512,6 +529,7 @@ intelEmitCopyBlit(struct brw_context *brw,
 		  GLshort w, GLshort h,
 		  GLenum logic_op)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    GLuint CMD, BR13;
    int dst_y2 = dst_y + h;
    int dst_x2 = dst_x + w;
@@ -520,7 +538,7 @@ intelEmitCopyBlit(struct brw_context *brw,
    uint32_t src_tile_w, src_tile_h;
    uint32_t dst_tile_w, dst_tile_h;
 
-   if ((dst_y_tiled || src_y_tiled) && brw->gen < 6)
+   if ((dst_y_tiled || src_y_tiled) && devinfo->gen < 6)
       return false;
 
    const unsigned bo_sizes = dst_buffer->size + src_buffer->size;
@@ -532,7 +550,7 @@ intelEmitCopyBlit(struct brw_context *brw,
    if (!brw_batch_has_aperture_space(brw, bo_sizes))
       return false;
 
-   unsigned length = brw->gen >= 8 ? 10 : 8;
+   unsigned length = devinfo->gen >= 8 ? 10 : 8;
 
    intel_batchbuffer_require_space(brw, length * 4, BLT_RING);
    DBG("%s src:buf(%p)/%d+%d %d,%d dst:buf(%p)/%d+%d %d,%d sz:%dx%d\n",
@@ -605,25 +623,17 @@ intelEmitCopyBlit(struct brw_context *brw,
    OUT_BATCH(BR13 | (uint16_t)dst_pitch);
    OUT_BATCH(SET_FIELD(dst_y, BLT_Y) | SET_FIELD(dst_x, BLT_X));
    OUT_BATCH(SET_FIELD(dst_y2, BLT_Y) | SET_FIELD(dst_x2, BLT_X));
-   if (brw->gen >= 8) {
-      OUT_RELOC64(dst_buffer,
-                  I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                  dst_offset);
+   if (devinfo->gen >= 8) {
+      OUT_RELOC64(dst_buffer, RELOC_WRITE, dst_offset);
    } else {
-      OUT_RELOC(dst_buffer,
-                I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                dst_offset);
+      OUT_RELOC(dst_buffer, RELOC_WRITE, dst_offset);
    }
    OUT_BATCH(SET_FIELD(src_y, BLT_Y) | SET_FIELD(src_x, BLT_X));
    OUT_BATCH((uint16_t)src_pitch);
-   if (brw->gen >= 8) {
-      OUT_RELOC64(src_buffer,
-                  I915_GEM_DOMAIN_RENDER, 0,
-                  src_offset);
+   if (devinfo->gen >= 8) {
+      OUT_RELOC64(src_buffer, 0, src_offset);
    } else {
-      OUT_RELOC(src_buffer,
-                I915_GEM_DOMAIN_RENDER, 0,
-                src_offset);
+      OUT_RELOC(src_buffer, 0, src_offset);
    }
 
    ADVANCE_BATCH_TILED(dst_y_tiled, src_y_tiled);
@@ -646,6 +656,7 @@ intelEmitImmediateColorExpandBlit(struct brw_context *brw,
 				  GLshort w, GLshort h,
 				  GLenum logic_op)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    int dwords = ALIGN(src_size, 8) / 4;
    uint32_t opcode, br13, blit_cmd;
 
@@ -666,7 +677,7 @@ intelEmitImmediateColorExpandBlit(struct brw_context *brw,
        __func__,
        dst_buffer, dst_pitch, dst_offset, x, y, w, h, src_size, dwords);
 
-   unsigned xy_setup_blt_length = brw->gen >= 8 ? 10 : 8;
+   unsigned xy_setup_blt_length = devinfo->gen >= 8 ? 10 : 8;
    intel_batchbuffer_require_space(brw, (xy_setup_blt_length * 4) +
                                         (3 * 4) + dwords * 4, BLT_RING);
 
@@ -690,19 +701,15 @@ intelEmitImmediateColorExpandBlit(struct brw_context *brw,
    OUT_BATCH(br13);
    OUT_BATCH((0 << 16) | 0); /* clip x1, y1 */
    OUT_BATCH((100 << 16) | 100); /* clip x2, y2 */
-   if (brw->gen >= 8) {
-      OUT_RELOC64(dst_buffer,
-                  I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                  dst_offset);
+   if (devinfo->gen >= 8) {
+      OUT_RELOC64(dst_buffer, RELOC_WRITE, dst_offset);
    } else {
-      OUT_RELOC(dst_buffer,
-                I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                dst_offset);
+      OUT_RELOC(dst_buffer, RELOC_WRITE, dst_offset);
    }
    OUT_BATCH(0); /* bg */
    OUT_BATCH(fg_color); /* fg */
    OUT_BATCH(0); /* pattern base addr */
-   if (brw->gen >= 8)
+   if (devinfo->gen >= 8)
       OUT_BATCH(0);
 
    OUT_BATCH(blit_cmd | ((3 - 2) + dwords));
@@ -786,6 +793,7 @@ intel_miptree_set_alpha_to_one(struct brw_context *brw,
                               struct intel_mipmap_tree *mt,
                               int x, int y, int width, int height)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    uint32_t BR13, CMD;
    int pitch, cpp;
 
@@ -795,6 +803,10 @@ intel_miptree_set_alpha_to_one(struct brw_context *brw,
    DBG("%s dst:buf(%p)/%d %d,%d sz:%dx%d\n",
        __func__, mt->bo, pitch, x, y, width, height);
 
+   /* Note: Currently only handles 8 bit alpha channel. Extension to < 8 Bit
+    * alpha channel would be likely possible via ROP code 0xfa instead of 0xf0
+    * and writing a suitable bit-mask instead of 0xffffffff.
+    */
    BR13 = br13_for_cpp(cpp) | 0xf0 << 16;
    CMD = XY_COLOR_BLT_CMD;
    CMD |= XY_BLT_WRITE_ALPHA;
@@ -809,7 +821,7 @@ intel_miptree_set_alpha_to_one(struct brw_context *brw,
    if (!brw_batch_has_aperture_space(brw, mt->bo->size))
       intel_batchbuffer_flush(brw);
 
-   unsigned length = brw->gen >= 8 ? 7 : 6;
+   unsigned length = devinfo->gen >= 8 ? 7 : 6;
    const bool dst_y_tiled = mt->surf.tiling == ISL_TILING_Y0;
 
    /* We need to split the blit into chunks that each fit within the blitter's
@@ -837,14 +849,10 @@ intel_miptree_set_alpha_to_one(struct brw_context *brw,
                    SET_FIELD(x + chunk_x, BLT_X));
          OUT_BATCH(SET_FIELD(y + chunk_y + chunk_h, BLT_Y) |
                    SET_FIELD(x + chunk_x + chunk_w, BLT_X));
-         if (brw->gen >= 8) {
-            OUT_RELOC64(mt->bo,
-                        I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                        mt->offset + offset);
+         if (devinfo->gen >= 8) {
+            OUT_RELOC64(mt->bo, RELOC_WRITE, mt->offset + offset);
          } else {
-            OUT_RELOC(mt->bo,
-                      I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-                      mt->offset + offset);
+            OUT_RELOC(mt->bo, RELOC_WRITE, mt->offset + offset);
          }
          OUT_BATCH(0xffffffff); /* white, but only alpha gets written */
          ADVANCE_BATCH_TILED(dst_y_tiled, false);
